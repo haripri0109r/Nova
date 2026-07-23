@@ -17,17 +17,7 @@ import webbrowser
 from pathlib import Path
 from ctypes import wintypes
 
-from ..config import (
-    OPEN_CLAUDE_CODE_IN_CHROME,
-    OPEN_BINANCE_BTC_IN_CHROME,
-    OPEN_CHROME_FULLSCREEN,
-    CHROME_SEPARATE_SITE_PROFILES,
-    CLAUDE_CHROME_MONITOR,
-    BINANCE_CHROME_MONITOR,
-    _chrome_window_size,
-    _chrome_site_user_data_dir,
-    _chrome_new_window_wait_timeout_s,
-)
+from ..config import settings, _chrome_window_size, _chrome_site_user_data_dir, _chrome_new_window_wait_timeout_s
 
 log = logging.getLogger("nova")
 
@@ -302,22 +292,22 @@ def _open_url_in_chrome(
 
 
 def open_claude_in_chrome() -> None:
-    if not OPEN_CLAUDE_CODE_IN_CHROME:
+    if not settings.open_claude_code_in_chrome:
         return
-    url = (os.environ.get("CLAUDE_CODE_URL") or "https://claude.ai/new").strip()
+    url = settings.claude_code_url
     pos: tuple[int, int] | None = None
     size: tuple[int, int] | None = None
-    fs = OPEN_CHROME_FULLSCREEN
+    fs = settings.open_chrome_fullscreen
     post_mon: int | None = None
     user_data: str | None = None
     if sys.platform == "win32":
-        post_mon = CLAUDE_CHROME_MONITOR
-        pos = _chrome_monitor_top_left(CLAUDE_CHROME_MONITOR)
+        post_mon = settings.claude_chrome_monitor
+        pos = _chrome_monitor_top_left(settings.claude_chrome_monitor)
         if fs:
-            size = _chrome_monitor_pixel_size(CLAUDE_CHROME_MONITOR)
+            size = _chrome_monitor_pixel_size(settings.claude_chrome_monitor)
         else:
             size = _chrome_window_size()
-        if CHROME_SEPARATE_SITE_PROFILES:
+        if settings.chrome_separate_site_profiles:
             user_data = _chrome_site_user_data_dir("claude")
     elif not fs:
         size = _chrome_window_size()
@@ -336,25 +326,22 @@ def open_claude_in_chrome() -> None:
 
 
 def open_binance_btc_in_chrome() -> None:
-    if not OPEN_BINANCE_BTC_IN_CHROME:
+    if not settings.open_binance_btc_in_chrome:
         return
-    url = (
-        os.environ.get("BINANCE_BTC_URL")
-        or "https://www.binance.com/en/trade/BTC_USDT"
-    ).strip()
+    url = settings.binance_btc_url
     pos: tuple[int, int] | None = None
     size: tuple[int, int] | None = None
-    fs = OPEN_CHROME_FULLSCREEN
+    fs = settings.open_chrome_fullscreen
     post_mon: int | None = None
     user_data: str | None = None
     if sys.platform == "win32":
-        post_mon = BINANCE_CHROME_MONITOR
-        pos = _chrome_monitor_top_left(BINANCE_CHROME_MONITOR)
+        post_mon = settings.binance_chrome_monitor
+        pos = _chrome_monitor_top_left(settings.binance_chrome_monitor)
         if fs:
-            size = _chrome_monitor_pixel_size(BINANCE_CHROME_MONITOR)
+            size = _chrome_monitor_pixel_size(settings.binance_chrome_monitor)
         else:
             size = _chrome_window_size()
-        if CHROME_SEPARATE_SITE_PROFILES:
+        if settings.chrome_separate_site_profiles:
             user_data = _chrome_site_user_data_dir("binance")
     elif not fs:
         size = _chrome_window_size()

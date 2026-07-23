@@ -13,14 +13,7 @@ from pathlib import Path
 import numpy as np
 import sounddevice as sd
 
-from .config import (
-    NOVA_WELCOME_ENABLED,
-    NOVA_WELCOME_PHRASE,
-    NOVA_WELCOME_CACHE_ENABLED,
-    elevenlabs_env_config,
-    _nova_welcome_cache_dir,
-    _nova_welcome_cache_path,
-)
+from .config import settings, elevenlabs_env_config, _nova_welcome_cache_dir, _nova_welcome_cache_path
 
 log = logging.getLogger("nova")
 
@@ -68,22 +61,22 @@ def _save_pcm_wav_file(path: Path, pcm_bytes: bytes, sample_rate: int) -> None:
 
 
 def say_nova_welcome() -> None:
-    if not NOVA_WELCOME_ENABLED or not NOVA_WELCOME_PHRASE.strip():
+    if not settings.nova_welcome_enabled or not settings.nova_welcome_phrase.strip():
         return
-    text = NOVA_WELCOME_PHRASE.strip()
+    text = settings.nova_welcome_phrase.strip()
     vid, model_id, output_format, pcm_rate = elevenlabs_env_config()
     if not vid:
         log.warning("Set ELEVENLABS_VOICE_ID in the environment for ElevenLabs TTS.")
         return
 
     cache_path = _nova_welcome_cache_path(text, vid, model_id, output_format)
-    if NOVA_WELCOME_CACHE_ENABLED and cache_path.is_file():
+    if settings.nova_welcome_cache_enabled and cache_path.is_file():
         log.info("Playing welcome from cache: %s", cache_path)
         if _play_pcm_wav_file(cache_path):
             return
         log.warning("Cache miss after read failure; fetching from ElevenLabs.")
 
-    api_key = (os.environ.get("ELEVENLABS_API_KEY") or "").strip()
+    api_key = settings.elevenlabs_api_key
     if not api_key:
         log.warning("Set ELEVENLABS_API_KEY in the environment for ElevenLabs TTS.")
         return
@@ -107,7 +100,7 @@ def say_nova_welcome() -> None:
     if not raw:
         log.warning("ElevenLabs returned empty audio.")
         return
-    if NOVA_WELCOME_CACHE_ENABLED:
+    if settings.nova_welcome_cache_enabled:
         try:
             _save_pcm_wav_file(cache_path, raw, pcm_rate)
             log.info("Saved welcome audio to cache: %s", cache_path)
@@ -120,7 +113,3 @@ def say_nova_welcome() -> None:
         sd.wait()
     except Exception as e:
         log.warning("Could not play ElevenLabs audio: %s", e)
-
-
-# Import os at module level for say_nova_welcome
-import os

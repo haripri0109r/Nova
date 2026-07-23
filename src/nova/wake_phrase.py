@@ -1,109 +1,69 @@
 #!/usr/bin/env python3
 """
-Wake‑phrase detection using Vosk (offline STT).
+Wake‑phrase detection using Google Web Speech API via SpeechRecognition.
 
 Provides:
-* WakePhraseListener – feeds audio blocks, returns recognised text when
-  Vosk produces a final or partial result.
-* matches_wake_phrase – word‑boundary aware check for "hello nova" or
-  "hey nova".
+* WakePhraseListener – captures full utterances from the microphone,
+  sends them to Google's free recognize_google() endpoint, and returns
+  the transcribed text (or None on failure).
+* matches_wake_phrase – word‑boundary aware check for "hello/hey nova"
+  (and known mis‑recognitions like "norma", "robot", "robert").
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-from pathlib import Path
-
-import numpy as np
-from scipy.signal import resample_poly
-
-try:
-    from vosk import KaldiRecognizer, Model
-except Exception as exc:  # pragma: no cover – handled at runtime
-    Model = None  # type: ignore
-    KaldiRecognizer = None  # type: ignore
-    _VOSK_IMPORT_ERROR = exc
-else:
-    _VOSK_IMPORT_ERROR = None
-
-from .config import SAMPLE_RATE, VOSK_MODEL_PATH
+import re
+import speech_recognition as sr
 
 log = logging.getLogger("nova")
 
 
 class WakePhraseListener:
     """
-    Streaming wake‑phrase listener backed by Vosk.
-
-    Parameters
-    ----------
-    model_path : str | Path
-        Path to the unpacked Vosk model directory (must contain `am/`,
-        `conf/`, `graph/` etc.).  Defaults to ``config.VOSK_MODEL_PATH``.
-    sample_rate : int
-        Input audio sample rate (must match the mic stream, default
-        ``config.SAMPLE_RATE`` = 44100 Hz).  Vosk models expect 16000 Hz,
-        so we resample internally.
+    Listens for a single complete utterance using the default microphone,
+    performs ambient‑noise calibration once at start‑up, then repeatedly
+    returns recognised text (or None).
     """
 
-    _TARGET_RATE = 16000  # Vosk model sample rate
-
-    def __init__(
-        self,
-        model_path: str | Path | None = None,
-        sample_rate: int = SAMPLE_RATE,
-    ) -> None:
-        if Model is None:  # vosk not importable
-            raise RuntimeError(
-                "vosk is not installed. Install it with `pip install vosk`."
-            ) from _VOSK_IMPORT_ERROR
-
-        self._sample_rate = sample_rate
-        self._up = self._TARGET_RATE
-        self._down = sample_rate
-
-        model_path = Path(model_path or VOSK_MODEL_PATH).expanduser().resolve()
-        if not model_path.exists():
-            raise FileNotFoundError(
-                f"Vosk model not found at {model_path}. "
-                "Run `python scripts/download_vosk_model.py` to fetch it."
-            )
-
-        log.info("Loading Vosk model from %s", model_path)
-        self._model = Model(str(model_path))
-        self._rec = KaldiRecognizer(self._model, self._TARGET_RATE)
-        self._rec.SetWords(True)
+    def __init__(self) -> None:
+        self._recognizer = sr.Recognizer()
+        self._mic = sr.Microphone()
+        # Calibrate once for ambient noise
+        with self._mic as source:
+            log.info("Calibrating for ambient noise (1 s)…")
+            self._recognizer.adjust_for_ambient_noise(source, duration=1.0)
+        log.info("Wake‑phrase listener ready")
 
     # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-    def listen(self, audio_block: np.ndarray) -> str | None:
+    def listen_for_utterance(self) -> str | None:
         """
-        Feed one audio block (float32 mono, shape (N,)) from the microphone.
-
-        Returns the recognised text (final or partial) if Vosk produced
-        something, otherwise ``None``.
+        Block until a full utterance is captured (speech followed by a pause)
+        or the optional phrase_time_limit expires. Returns the recognised
+        text, or None on failure.
         """
-        if audio_block.ndim != 1:
-            audio_block = np.mean(audio_block, axis=1)
+        with self._mic as source:
+            try:
+                audio = self._recognizer.listen(
+                    source,
+                    timeout=None,          # wait indefinitely for speech to start
+                    phrase_time_limit=5.0, # max length of a single utterance
+                )
+            except sr.WaitTimeoutError:
+                # No speech started within timeout (not used because timeout=None)
+                return None
 
-        # 1️⃣  Resample to 16 kHz (float32 → float32)
-        block_16k = resample_poly(audio_block.astype(np.float32), self._up, self._down)
-
-        # 2️⃣  Convert to 16‑bit PCM bytes for Vosk
-        pcm16 = (block_16k * 32767.0).clip(-32768, 32767).astype(np.int16).tobytes()
-
-        # 3️⃣  Feed Vosk
-        if self._rec.AcceptWaveform(pcm16):
-            result = json.loads(self._rec.Result())
-            return result.get("text", "") or None
-
-        # Also surface partial results for faster wake‑word reaction
-        partial = json.loads(self._rec.PartialResult())
-        txt = partial.get("partial", "")
-        return txt if txt else None
+        try:
+            text = self._recognizer.recognize_google(audio)
+            return text
+        except sr.UnknownValueError:
+            # unintelligible – common during silence / background noise
+            log.debug("Google STT could not understand audio")
+            return None
+        except sr.RequestError as exc:
+            # network / API problem – warn but keep running
+            log.warning("Google Web Speech API request failed: %s", exc)
+            return None
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -115,19 +75,14 @@ class WakePhraseListener:
         * "hello" or "hey" immediately followed by one of the target words:
           "nova", "norma", "robot", "robert".
 
-        Fallback rule (conservative):
-        * If the final recognised text consists of 1‑2 words and the sole
-          word (or last word) is one of the target words, treat it as a
-          deliberate short command.  This avoids false triggers from longer
-          sentences that merely contain the word.
+        Fallback (conservative):
+        * If the whole utterance is 1‑2 words and any word is a target word,
+          treat it as a deliberate short command.
         """
         if not text:
             return False
         lowered = text.lower()
-        import re
-
         words = re.split(r"[^a-z0-9']+", lowered)
-        # target words that can follow "hello"/"hey"
         target_words = {"nova", "norma", "robot", "robert"}
 
         # Primary two‑word check
@@ -135,10 +90,8 @@ class WakePhraseListener:
             if words[i] in ("hello", "hey") and words[i + 1] in target_words:
                 return True
 
-        # Fallback: short final result consisting only of a target word
-        if len(words) <= 2:
-            # check if any word in the short utterance is a target word
-            if any(w in target_words for w in words):
-                return True
+        # Fallback for very short utterances consisting only of a target word
+        if len(words) <= 2 and any(w in target_words for w in words):
+            return True
 
         return False

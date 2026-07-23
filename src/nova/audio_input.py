@@ -6,25 +6,18 @@ Audio input handling: device enumeration, selection, RMS calculation, and block 
 from __future__ import annotations
 
 import logging
-import os
 import time
 
 import numpy as np
 import sounddevice as sd
 
-from .config import (
-    SAMPLE_RATE,
-    BLOCK_MS,
-    CHANNELS,
-    INPUT_PROBE_S,
-    INPUT_SILENT_RMS,
-)
+from .config import settings
 
 log = logging.getLogger("nova")
 
 
 def block_samples() -> int:
-    n = int(SAMPLE_RATE * BLOCK_MS / 1000)
+    n = int(settings.sample_rate * settings.block_ms / 1000)
     return max(n, 1)
 
 
@@ -63,13 +56,13 @@ def _probe_input_max_rms(device: int, blocksize: int) -> float | None:
     try:
         with sd.InputStream(
             device=device,
-            samplerate=SAMPLE_RATE,
-            channels=CHANNELS,
+            samplerate=settings.sample_rate,
+            channels=settings.channels,
             dtype="float32",
             blocksize=blocksize,
         ) as stream:
             peak = 0.0
-            deadline = time.monotonic() + INPUT_PROBE_S
+            deadline = time.monotonic() + settings.input_probe_s
             while time.monotonic() < deadline:
                 data, _ = stream.read(blocksize)
                 peak = max(peak, rms_mono(data))
@@ -81,7 +74,7 @@ def _probe_input_max_rms(device: int, blocksize: int) -> float | None:
 def _choose_input_device(blocksize: int) -> int:
     log.info("Audio devices:\n%s", sd.query_devices())
 
-    override = (os.environ.get("NOVA_INPUT_DEVICE") or "").strip()
+    override = (settings.nova_input_device or "").strip()
     if override:
         try:
             idx = _resolve_input_device_index(override)
@@ -94,7 +87,7 @@ def _choose_input_device(blocksize: int) -> int:
         log.info("Using NOVA_INPUT_DEVICE [%d]: %s", idx, name)
         if peak is None:
             log.warning("Could not open configured mic; trying anyway.")
-        elif peak < INPUT_SILENT_RMS:
+        elif peak < settings.input_silent_rms:
             log.warning(
                 "Configured mic looks silent (probe rms=%.5f). "
                 "Check Windows input level or try another NOVA_INPUT_DEVICE.",
@@ -108,7 +101,7 @@ def _choose_input_device(blocksize: int) -> int:
     if default is not None and default >= 0:
         default_name = sd.query_devices(default)["name"]
         peak = _probe_input_max_rms(default, blocksize)
-        if peak is not None and peak >= INPUT_SILENT_RMS:
+        if peak is not None and peak >= settings.input_silent_rms:
             log.info(
                 "Using default microphone [%d]: %s (probe rms=%.5f)",
                 default,
@@ -134,7 +127,7 @@ def _choose_input_device(blocksize: int) -> int:
             best_peak = peak
             best_idx = idx
 
-    if best_idx is not None and best_peak >= INPUT_SILENT_RMS:
+    if best_idx is not None and best_peak >= settings.input_silent_rms:
         log.info(
             "Auto-selected microphone [%d]: %s (probe rms=%.5f)",
             best_idx,

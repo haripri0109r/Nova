@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Download and extract the Vosk small English model (vosk-model-small-en-us-0.15)
-into the local `models/` directory.
+Download and extract a Vosk English model into the local `models/` directory.
 
 Usage:
     python scripts/download_vosk_model.py
+
+The model can be overridden via the environment variable VOSK_MODEL_NAME.
+Default is the lookahead-graph variant "vosk-model-en-us-0.22-lgraph" (~128 MB).
 """
 
 import os
@@ -13,7 +15,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-MODEL_NAME = "vosk-model-small-en-us-0.15"
+MODEL_NAME = os.environ.get("VOSK_MODEL_NAME", "vosk-model-en-us-0.22-lgraph")
 MODEL_URL = f"https://alphacephei.com/vosk/models/{MODEL_NAME}.zip"
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 MODEL_DIR = MODELS_DIR / MODEL_NAME
@@ -27,7 +29,7 @@ def download_model() -> None:
         print(f"Model already present at {MODEL_DIR}")
         return
 
-    print(f"Downloading {MODEL_NAME} (~40 MB) from {MODEL_URL} ...")
+    print(f"Downloading {MODEL_NAME} (~128 MB) from {MODEL_URL} ...")
     try:
         urllib.request.urlretrieve(MODEL_URL, ZIP_PATH)
     except Exception as exc:

@@ -14,11 +14,7 @@ import sys
 import time
 from ctypes import wintypes
 
-from ..config import (
-    FOCUS_EXISTING_CURSOR_ON_WAKE,
-    OPEN_NEW_CURSOR_ON_WAKE,
-    CURSOR_OPEN_FULLSCREEN,
-)
+from ..config import settings
 
 log = logging.getLogger("nova")
 
@@ -131,7 +127,7 @@ def _focus_existing_cursor_window_win32() -> bool:
 
 
 def open_cursor_window() -> None:
-    if not FOCUS_EXISTING_CURSOR_ON_WAKE and not OPEN_NEW_CURSOR_ON_WAKE:
+    if not settings.focus_existing_cursor_on_wake and not settings.open_new_cursor_on_wake:
         return
     exe = _cursor_executable()
     if not exe:
@@ -147,18 +143,18 @@ def open_cursor_window() -> None:
     if sys.platform == "win32":
         popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
-        if FOCUS_EXISTING_CURSOR_ON_WAKE:
+        if settings.focus_existing_cursor_on_wake:
             focused = (
                 sys.platform == "win32" and _focus_existing_cursor_window_win32()
             )
             if not focused:
                 subprocess.Popen([exe], **popen_kw)
-        if OPEN_NEW_CURSOR_ON_WAKE:
+        if settings.open_new_cursor_on_wake:
             subprocess.Popen([exe, "-n"], **popen_kw)
     except OSError as e:
         log.warning("Could not start or focus Cursor: %s", e)
         return
-    if sys.platform == "win32" and CURSOR_OPEN_FULLSCREEN:
+    if sys.platform == "win32" and settings.cursor_open_fullscreen:
         time.sleep(0.5)
         hwnd = _cursor_largest_main_hwnd_win32()
         if hwnd is not None:

@@ -5,3 +5,9 @@ websockets>=13
 python-dotenv>=1.0,<2
 vosk>=0.3.45
 scipy>=1.10
+pydantic-settings>=2.0
+SpeechRecognition>=3.10
+# PyAudio is required for speech_recognition's Microphone on Windows.
+# Wheels can be missing on PyPI; reliable install on Windows:
+#   pip install pipwin && pipwin install pyaudio
+PyAudio>=0.2.13

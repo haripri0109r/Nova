@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Configuration constants and environment loading for nova.
-All module-level constants from the original nova.py, plus load_dotenv() call.
+Configuration for Nova using Pydantic BaseSettings.
+All runtime constants are defined as typed fields with validation.
 """
 
 from __future__ import annotations
@@ -9,89 +9,143 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Optional
 
-from dotenv import load_dotenv
-
-# --- tuning knobs -----------------------------------------------------------
-SAMPLE_RATE = 44100
-BLOCK_MS = 40
-CHANNELS = 1
-
-# Mic‑selection probe settings (kept for audio_input.py)
-INPUT_PROBE_S = 0.5
-INPUT_SILENT_RMS = 0.001
-
-# Wake‑phrase (Vosk) settings
-VOSK_MODEL_PATH = os.environ.get(
-    "VOSK_MODEL_PATH",
-    str(Path(__file__).resolve().parent.parent.parent / "models" / "vosk-model-small-en-us-0.15"),
-)
-
-# Logging level (DEBUG, INFO, WARNING, ERROR). Default INFO.
-NOVA_LOG_LEVEL = getattr(logging, os.environ.get("NOVA_LOG_LEVEL", "INFO").upper(), logging.INFO)
-
-# Spotify: "spotify:track:TRACK_ID" or https://open.spotify.com/track/...
-# YouTube: https://www.youtube.com/watch?v=...
-SONG_URI = "https://open.spotify.com/track/39shmbIHICJ2Wxnk1fPSdz?si=2900c75c2e2d4b82"
-
-# Cursor: focus existing instance (no -n). Set OPEN_NEW_CURSOR_ON_WAKE for a new window as well.
-FOCUS_EXISTING_CURSOR_ON_WAKE = True
-OPEN_NEW_CURSOR_ON_WAKE = False
-CURSOR_OPEN_FULLSCREEN = True
-
-# Google Chrome (fallback: default browser). URLs overridable in .env.
-OPEN_CLAUDE_CODE_IN_CHROME = True
-OPEN_BINANCE_BTC_IN_CHROME = True
-OPEN_CHROME_FULLSCREEN = True
-# False = default Chrome profile (your normal user, extensions, cookies). True = temp dirs under %TEMP% per site.
-CHROME_SEPARATE_SITE_PROFILES = False
-# Which physical screen (1 = leftmost/top-first after sorting). Windows only; ignored elsewhere.
-CLAUDE_CHROME_MONITOR = 1
-BINANCE_CHROME_MONITOR = 3
-
-NOVA_WELCOME_ENABLED = True
-NOVA_WELCOME_PHRASE = (
-    "Welcome home sir. "
-    "Congratulations on the new client for your SaaS app—make sure to follow up. "
-    "If it helps: a short, specific note while the deal is still fresh usually "
-    "anchors trust better than a polished deck sent cold a few days later."
-)
-# Seconds after launching SONG_URI before speaking (gives Spotify/browser time to start).
-NOVA_AFTER_SONG_DELAY_S = 1.0
-# Save ElevenLabs PCM as WAV under .cache/nova_welcome/; replay skips the API when the key matches.
-NOVA_WELCOME_CACHE_ENABLED = True
-
-# Logging level for the application (INFO, DEBUG, WARNING, etc.)
-NOVA_LOG_LEVEL = os.environ.get("NOVA_LOG_LEVEL", "INFO").upper()
-
-# Load .env from the project root (parent of src/nova/)
-load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
+from pydantic import BaseModel, Field, validator, root_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def _elevenlabs_pcm_sample_rate(output_format: str) -> int:
-    override = (os.environ.get("ELEVENLABS_PCM_SAMPLE_RATE") or "").strip()
-    if override.isdigit():
-        return int(override)
-    if output_format.startswith("pcm_"):
-        try:
-            return int(output_format.split("_", maxsplit=1)[1])
-        except (ValueError, IndexError):
-            pass
-    return 24000
+def _default_vosk_model_path() -> Path:
+    # repo root is three levels up from this file (src/nova/config.py)
+    return Path(__file__).resolve().parent.parent.parent / "models" / "vosk-model-en-us-0.22-lgraph"
 
 
+def _default_cache_dir() -> Path:
+    return Path(__file__).resolve().parent.parent.parent / ".cache" / "nova_welcome"
+
+
+class Settings(BaseSettings):
+    # pydantic-settings v2 uses model_config
+    model_config = SettingsConfigDict(
+        env_file=str(Path(__file__).resolve().parent.parent.parent / ".env"),
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # --- Audio ---------------------------------------------------------
+    sample_rate: int = Field(default=44100, gt=0)
+    block_ms: int = Field(default=40, gt=0)
+    channels: int = Field(default=1, ge=1, le=2)
+
+    input_probe_s: float = Field(default=0.5, gt=0)
+    input_silent_rms: float = Field(default=0.001, ge=0)
+
+    # --- Vosk ----------------------------------------------------------
+    vosk_model_path: Path = Field(default_factory=_default_vosk_model_path)
+
+    # --- Logging -------------------------------------------------------
+    nova_log_level: str = Field(default="INFO")
+
+    # --- Spotify / media -----------------------------------------------
+    song_uri: str = Field(
+        default="https://open.spotify.com/track/39shmbIHICJ2Wxnk1fPSdz?si=2900c75c2e2d4b82"
+    )
+
+    # --- Cursor ---------------------------------------------------------
+    focus_existing_cursor_on_wake: bool = True
+    open_new_cursor_on_wake: bool = False
+    cursor_open_fullscreen: bool = True
+
+    # --- Chrome ---------------------------------------------------------
+    open_claude_code_in_chrome: bool = True
+    open_binance_btc_in_chrome: bool = True
+    open_chrome_fullscreen: bool = True
+    chrome_separate_site_profiles: bool = False
+    claude_chrome_monitor: int = Field(default=1, ge=1)
+    binance_chrome_monitor: int = Field(default=3, ge=1)
+
+    # --- Welcome / TTS --------------------------------------------------
+    nova_welcome_enabled: bool = True
+    nova_welcome_phrase: str = (
+        "Welcome home sir. "
+        "Congratulations on the new client for your SaaS app—make sure to follow up. "
+        "If it helps: a short, specific note while the deal is still fresh usually "
+        "anchors trust better than a polished deck sent cold a few days later."
+    )
+    nova_after_song_delay_s: float = Field(default=1.0, ge=0)
+    nova_welcome_cache_enabled: bool = True
+
+    # ElevenLabs ---------------------------------------------------------
+    elevenlabs_api_key: Optional[str] = None
+    elevenlabs_voice_id: Optional[str] = None
+    elevenlabs_model_id: str = "eleven_multilingual_v2"
+    elevenlabs_output_format: str = "pcm_24000"
+    elevenlabs_pcm_sample_rate: Optional[int] = None
+
+    # Chrome URLs --------------------------------------------------------
+    claude_code_url: str = "https://claude.ai/new"
+    binance_btc_url: str = "https://www.binance.com/en/trade/BTC_USDT"
+
+    # Chrome window sizing -----------------------------------------------
+    chrome_window_width: int = Field(default=1400, ge=400)
+    chrome_window_height: int = Field(default=900, ge=300)
+    chrome_new_window_wait_s: float = Field(default=25.0, ge=3.0)
+
+    # Cache dir ----------------------------------------------------------
+    nova_welcome_cache_dir: Optional[Path] = None
+
+    # Audio input device -------------------------------------------------
+    nova_input_device: Optional[str] = None
+
+    # --------------------------------------------------------------------
+    # Validators
+    # --------------------------------------------------------------------
+    @validator("nova_log_level")
+    def _valid_log_level(cls, v: str) -> str:
+        lvl = v.upper()
+        if lvl not in logging._nameToLevel:
+            raise ValueError(f"Invalid log level: {v}")
+        return lvl
+
+    @validator("vosk_model_path")
+    def _vosk_model_exists(cls, v: Path) -> Path:
+        if not v.is_dir():
+            raise FileNotFoundError(
+                f"Vosk model not found at {v}. "
+                "Run `python scripts/download_vosk_model.py` to fetch it."
+            )
+        return v
+
+    @root_validator(skip_on_failure=True)
+    def _warn_missing_elevenlabs(cls, values):
+        if values.get("nova_welcome_enabled") and not values.get("elevenlabs_voice_id"):
+            logging.getLogger(__name__).warning(
+                "NOVA_WELCOME_ENABLED=True but ELEVENLABS_VOICE_ID is not set. "
+                "TTS will be skipped until both ELEVENLABS_VOICE_ID and ELEVENLABS_API_KEY are provided."
+            )
+        return values
+
+
+# Single instance used throughout the project
+settings = Settings()
+
+
+# --------------------------------------------------------------------
+# Back‑compatibility helpers used by other modules
+# --------------------------------------------------------------------
 def elevenlabs_env_config() -> tuple[str, str, str, int]:
-    """voice_id, model_id, output_format, pcm_sample_rate."""
-    voice = (os.environ.get("ELEVENLABS_VOICE_ID") or "").strip()
-    model = (os.environ.get("ELEVENLABS_MODEL_ID") or "eleven_multilingual_v2").strip()
-    fmt = (os.environ.get("ELEVENLABS_OUTPUT_FORMAT") or "pcm_24000").strip()
-    rate = _elevenlabs_pcm_sample_rate(fmt)
+    """Return (voice_id, model_id, output_format, pcm_sample_rate)."""
+    voice = settings.elevenlabs_voice_id or ""
+    model = settings.elevenlabs_model_id
+    fmt = settings.elevenlabs_output_format
+    rate = settings.elevenlabs_pcm_sample_rate or 24000
     return voice, model, fmt, rate
 
 
 def _nova_welcome_cache_dir() -> Path:
     base = Path(__file__).resolve().parent.parent.parent
-    override = (os.environ.get("NOVA_WELCOME_CACHE_DIR") or "").strip()
+    override = settings.nova_welcome_cache_dir
     if override:
         return Path(override).expanduser().resolve()
     return base / ".cache" / "nova_welcome"
@@ -108,12 +162,7 @@ def _nova_welcome_cache_path(
 
 
 def _chrome_window_size() -> tuple[int, int]:
-    w = (os.environ.get("CHROME_WINDOW_WIDTH") or "1400").strip()
-    h = (os.environ.get("CHROME_WINDOW_HEIGHT") or "900").strip()
-    try:
-        return (max(400, int(w)), max(300, int(h)))
-    except ValueError:
-        return (1400, 900)
+    return (settings.chrome_window_width, settings.chrome_window_height)
 
 
 def _chrome_site_user_data_dir(site_key: str) -> str:
@@ -126,7 +175,4 @@ def _chrome_site_user_data_dir(site_key: str) -> str:
 
 
 def _chrome_new_window_wait_timeout_s() -> float:
-    try:
-        return max(3.0, float((os.environ.get("CHROME_NEW_WINDOW_WAIT_S") or "25").strip()))
-    except ValueError:
-        return 25.0
+    return settings.chrome_new_window_wait_s
