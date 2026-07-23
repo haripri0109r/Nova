@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Entry point: wires audio_input + clap_detector + automation + tts.
-Reproduces run_double_clap_actions() and main() from the original nova.py exactly.
+Entry point: wires audio_input + wake_phrase + automation + tts.
 """
 
 from __future__ import annotations
@@ -18,13 +17,9 @@ from .config import (
     SAMPLE_RATE,
     BLOCK_MS,
     CHANNELS,
-    MIN_DOUBLE_GAP_S,
-    MAX_DOUBLE_GAP_S,
-    SPIKE_RATIO,
-    COOLDOWN_S,
     SONG_URI,
-    FOCUS_EXISTING_CURSOR_ON_DOUBLE_CLAP,
-    OPEN_NEW_CURSOR_ON_DOUBLE_CLAP,
+    FOCUS_EXISTING_CURSOR_ON_WAKE,
+    OPEN_NEW_CURSOR_ON_WAKE,
     CURSOR_OPEN_FULLSCREEN,
     OPEN_CLAUDE_CODE_IN_CHROME,
     OPEN_BINANCE_BTC_IN_CHROME,
@@ -34,20 +29,21 @@ from .config import (
     NOVA_WELCOME_ENABLED,
     NOVA_WELCOME_PHRASE,
     NOVA_AFTER_SONG_DELAY_S,
+    NOVA_LOG_LEVEL,
     elevenlabs_env_config,
 )
-from .audio_input import block_samples, rms_mono, _choose_input_device
-from .clap_detector import ClapDetector
+from .audio_input import block_samples, _choose_input_device
+from .wake_phrase import WakePhraseListener
 from .automation.spotify import play_song
 from .automation.chrome import open_claude_in_chrome, open_binance_btc_in_chrome
 from .automation.cursor_editor import open_cursor_window
 from .tts import say_nova_welcome
 
-log = logging.getLogger("clap_listen")
+log = logging.getLogger("nova")
 
 
-def run_double_clap_actions() -> None:
-    """Run outside the mic loop so sleeps do not stall capture."""
+def run_wake_actions() -> None:
+    """Run the same five actions as the old wake‑phrase flow."""
     play_song(SONG_URI)
     open_claude_in_chrome()
     open_binance_btc_in_chrome()
@@ -60,29 +56,25 @@ def run_double_clap_actions() -> None:
 
 
 def main() -> int:
+    logging.basicConfig(level=NOVA_LOG_LEVEL, format="%(levelname)s:%(name)s:%(message)s")
     blocksize = block_samples()
 
     log.info(
-        "Listening (double clap: %.2f-%.2fs apart, rate=%d, block=%d ms, "
-        "spike_ratio=%.1f, cooldown=%.2fs). Ctrl+C to stop.",
-        MIN_DOUBLE_GAP_S,
-        MAX_DOUBLE_GAP_S,
+        "Listening for wake phrase 'hello nova' (rate=%d, block=%d ms). Ctrl+C to stop.",
         SAMPLE_RATE,
         BLOCK_MS,
-        SPIKE_RATIO,
-        COOLDOWN_S,
     )
     if SONG_URI.strip():
-        log.info("Double clap opens this track: %s", SONG_URI.strip())
+        log.info("Wake phrase opens this track: %s", SONG_URI.strip())
     else:
-        log.info("SONG_URI is empty — set it to play one song on each double clap.")
-    if FOCUS_EXISTING_CURSOR_ON_DOUBLE_CLAP:
+        log.info("SONG_URI is empty — set it to play a song on each wake phrase.")
+    if FOCUS_EXISTING_CURSOR_ON_WAKE:
         log.info(
-            "Double clap will foreground an existing Cursor window (Windows API); "
+            "Wake phrase will foreground an existing Cursor window (Windows API); "
             "falls back to launching Cursor if none is running."
         )
-    if OPEN_NEW_CURSOR_ON_DOUBLE_CLAP:
-        log.info("Double clap will also open a new Cursor window (-n).")
+    if OPEN_NEW_CURSOR_ON_WAKE:
+        log.info("Wake phrase will also open a new Cursor window (-n).")
     if CURSOR_OPEN_FULLSCREEN and sys.platform == "win32":
         log.info("Cursor will be sent F11 for fullscreen after focus/launch.")
     if OPEN_CLAUDE_CODE_IN_CHROME:
@@ -118,7 +110,7 @@ def main() -> int:
 
     input_idx = _choose_input_device(blocksize)
 
-    detector = ClapDetector()
+    wake_listener = WakePhraseListener()
     welcome_sequence_done = False
 
     try:
@@ -134,21 +126,23 @@ def main() -> int:
                 if overflowed:
                     log.warning("Input overflow; try a larger BLOCK_MS")
 
-                level = rms_mono(data)
+                # data shape (blocksize, channels) -> mono float32
+                if data.ndim > 1:
+                    audio_block = data[:, 0]
+                else:
+                    audio_block = data
 
-                if detector.update(level):
+                text = wake_listener.listen(audio_block)
+                if text is not None:
+                    log.debug("Heard: %r", text)
+                if text and WakePhraseListener.matches_wake_phrase(text):
                     if not welcome_sequence_done:
                         welcome_sequence_done = True
                         log.info(
-                            "Double clap detected (gap=%.3fs, rms=%.5f, "
-                            "noise_floor=%.5f, threshold=%.5f) — running welcome once",
-                            detector.last_gap,
-                            level,
-                            detector.state.noise_floor,
-                            detector.threshold,
+                            "Wake phrase detected: %r — running welcome once", text
                         )
                         threading.Thread(
-                            target=run_double_clap_actions, daemon=True
+                            target=run_wake_actions, daemon=True
                         ).start()
 
     except KeyboardInterrupt:

@@ -20,7 +20,7 @@ from .config import (
     INPUT_SILENT_RMS,
 )
 
-log = logging.getLogger("clap_listen")
+log = logging.getLogger("nova")
 
 
 def block_samples() -> int:
@@ -81,7 +81,7 @@ def _probe_input_max_rms(device: int, blocksize: int) -> float | None:
 def _choose_input_device(blocksize: int) -> int:
     log.info("Audio devices:\n%s", sd.query_devices())
 
-    override = (os.environ.get("NOVA_INPUT_DEVICE") or os.environ.get("JARVIS_INPUT_DEVICE") or "").strip()
+    override = (os.environ.get("NOVA_INPUT_DEVICE") or "").strip()
     if override:
         try:
             idx = _resolve_input_device_index(override)

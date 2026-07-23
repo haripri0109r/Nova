@@ -22,7 +22,7 @@ from .config import (
     _nova_welcome_cache_path,
 )
 
-log = logging.getLogger("clap_listen")
+log = logging.getLogger("nova")
 
 
 def _play_pcm_wav_file(path: Path) -> bool:

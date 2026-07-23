@@ -29,7 +29,7 @@ from ..config import (
     _chrome_new_window_wait_timeout_s,
 )
 
-log = logging.getLogger("clap_listen")
+log = logging.getLogger("nova")
 
 
 def _chrome_executable() -> str | None:

@@ -10,7 +10,7 @@ import os
 import sys
 import webbrowser
 
-log = logging.getLogger("clap_listen")
+log = logging.getLogger("nova")
 
 
 def play_song(uri: str) -> None:

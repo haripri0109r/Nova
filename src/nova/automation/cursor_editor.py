@@ -15,12 +15,12 @@ import time
 from ctypes import wintypes
 
 from ..config import (
-    FOCUS_EXISTING_CURSOR_ON_DOUBLE_CLAP,
-    OPEN_NEW_CURSOR_ON_DOUBLE_CLAP,
+    FOCUS_EXISTING_CURSOR_ON_WAKE,
+    OPEN_NEW_CURSOR_ON_WAKE,
     CURSOR_OPEN_FULLSCREEN,
 )
 
-log = logging.getLogger("clap_listen")
+log = logging.getLogger("nova")
 
 
 def _cursor_executable() -> str | None:
@@ -131,7 +131,7 @@ def _focus_existing_cursor_window_win32() -> bool:
 
 
 def open_cursor_window() -> None:
-    if not FOCUS_EXISTING_CURSOR_ON_DOUBLE_CLAP and not OPEN_NEW_CURSOR_ON_DOUBLE_CLAP:
+    if not FOCUS_EXISTING_CURSOR_ON_WAKE and not OPEN_NEW_CURSOR_ON_WAKE:
         return
     exe = _cursor_executable()
     if not exe:
@@ -147,13 +147,13 @@ def open_cursor_window() -> None:
     if sys.platform == "win32":
         popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
-        if FOCUS_EXISTING_CURSOR_ON_DOUBLE_CLAP:
+        if FOCUS_EXISTING_CURSOR_ON_WAKE:
             focused = (
                 sys.platform == "win32" and _focus_existing_cursor_window_win32()
             )
             if not focused:
                 subprocess.Popen([exe], **popen_kw)
-        if OPEN_NEW_CURSOR_ON_DOUBLE_CLAP:
+        if OPEN_NEW_CURSOR_ON_WAKE:
             subprocess.Popen([exe, "-n"], **popen_kw)
     except OSError as e:
         log.warning("Could not start or focus Cursor: %s", e)

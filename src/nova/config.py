@@ -6,6 +6,7 @@ All module-level constants from the original nova.py, plus load_dotenv() call.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -16,25 +17,26 @@ SAMPLE_RATE = 44100
 BLOCK_MS = 40
 CHANNELS = 1
 
-SPIKE_RATIO = 7.0
-COOLDOWN_S = 0.45
-MIN_DOUBLE_GAP_S = 0.05
-MAX_DOUBLE_GAP_S = 0.35
-RETRIGGER_RATIO = 0.55
-NOISE_FLOOR_ALPHA = 0.992
-MIN_RMS = 0.012
-QUIET_GATE_MULT = 2.2  # update noise floor only when below floor * this
-# Startup mic probe: if default input RMS stays below this, scan for a louder device.
+# Mic‑selection probe settings (kept for audio_input.py)
 INPUT_PROBE_S = 0.5
 INPUT_SILENT_RMS = 0.001
+
+# Wake‑phrase (Vosk) settings
+VOSK_MODEL_PATH = os.environ.get(
+    "VOSK_MODEL_PATH",
+    str(Path(__file__).resolve().parent.parent.parent / "models" / "vosk-model-small-en-us-0.15"),
+)
+
+# Logging level (DEBUG, INFO, WARNING, ERROR). Default INFO.
+NOVA_LOG_LEVEL = getattr(logging, os.environ.get("NOVA_LOG_LEVEL", "INFO").upper(), logging.INFO)
 
 # Spotify: "spotify:track:TRACK_ID" or https://open.spotify.com/track/...
 # YouTube: https://www.youtube.com/watch?v=...
 SONG_URI = "https://open.spotify.com/track/39shmbIHICJ2Wxnk1fPSdz?si=2900c75c2e2d4b82"
 
-# Cursor: focus existing instance (no -n). Set OPEN_NEW_CURSOR_ON_DOUBLE_CLAP for a new window as well.
-FOCUS_EXISTING_CURSOR_ON_DOUBLE_CLAP = True
-OPEN_NEW_CURSOR_ON_DOUBLE_CLAP = False
+# Cursor: focus existing instance (no -n). Set OPEN_NEW_CURSOR_ON_WAKE for a new window as well.
+FOCUS_EXISTING_CURSOR_ON_WAKE = True
+OPEN_NEW_CURSOR_ON_WAKE = False
 CURSOR_OPEN_FULLSCREEN = True
 
 # Google Chrome (fallback: default browser). URLs overridable in .env.
@@ -58,6 +60,9 @@ NOVA_WELCOME_PHRASE = (
 NOVA_AFTER_SONG_DELAY_S = 1.0
 # Save ElevenLabs PCM as WAV under .cache/nova_welcome/; replay skips the API when the key matches.
 NOVA_WELCOME_CACHE_ENABLED = True
+
+# Logging level for the application (INFO, DEBUG, WARNING, etc.)
+NOVA_LOG_LEVEL = os.environ.get("NOVA_LOG_LEVEL", "INFO").upper()
 
 # Load .env from the project root (parent of src/nova/)
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
@@ -86,14 +91,10 @@ def elevenlabs_env_config() -> tuple[str, str, str, int]:
 
 def _nova_welcome_cache_dir() -> Path:
     base = Path(__file__).resolve().parent.parent.parent
-    override = (os.environ.get("NOVA_WELCOME_CACHE_DIR") or os.environ.get("JARVIS_WELCOME_CACHE_DIR") or "").strip()
+    override = (os.environ.get("NOVA_WELCOME_CACHE_DIR") or "").strip()
     if override:
         return Path(override).expanduser().resolve()
-    nova_path = base / ".cache" / "nova_welcome"
-    jarvis_path = base / ".cache" / "jarvis_welcome"
-    if jarvis_path.exists() and not nova_path.exists():
-        return jarvis_path
-    return nova_path
+    return base / ".cache" / "nova_welcome"
 
 
 def _nova_welcome_cache_path(
@@ -119,7 +120,7 @@ def _chrome_site_user_data_dir(site_key: str) -> str:
     import tempfile
     from pathlib import Path
 
-    p = Path(tempfile.gettempdir()) / "clap-trigger-chrome" / site_key
+    p = Path(tempfile.gettempdir()) / "wake-trigger-chrome" / site_key
     p.mkdir(parents=True, exist_ok=True)
     return str(p)
 
