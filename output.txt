@@ -1,0 +1,42 @@
+NOVA_WELCOME_ENABLED=True but ELEVENLABS_VOICE_ID is not set. TTS will be skipped until both ELEVENLABS_VOICE_ID and ELEVENLABS_API_KEY are provided.
+INFO:nova:Listening for wake phrase 'hello nova' (Google Web Speech API). Ctrl+C to stop.
+INFO:nova:Wake phrase opens this track: https://open.spotify.com/track/39shmbIHICJ2Wxnk1fPSdz?si=2900c75c2e2d4b82
+INFO:nova:Wake phrase will foreground an existing Cursor window (Windows API); falls back to launching Cursor if none is running.
+INFO:nova:Cursor will be sent F11 for fullscreen after focus/launch.
+INFO:nova:After Spotify, open Claude in Chrome fullscreen on monitor 1: https://claude.ai/new
+INFO:nova:After Spotify, open Binance BTC in Chrome fullscreen on monitor 3: https://www.binance.com/en/trade/BTC_USDT
+INFO:nova:After song + 1.00s: 'Welcome home sir. Congratulations on the new client for your SaaS app�make sure to follow up. If it helps: a short, specific note while the deal is still fresh usually anchors trust better than a polished deck sent cold a few days later.' (ElevenLabs voice=(unset), model=eleven_multilingual_v2, format=pcm_24000, pcm_rate=24000)
+INFO:nova:Audio devices:
+   0 Microsoft Sound Mapper - Input, MME (2 in, 0 out)
+>  1 Microphone Array (Realtek(R) Au, MME (2 in, 0 out)
+   2 Microsoft Sound Mapper - Output, MME (0 in, 2 out)
+<  3 Speakers (Realtek(R) Audio), MME (0 in, 2 out)
+   4 Primary Sound Capture Driver, Windows DirectSound (2 in, 0 out)
+   5 Microphone Array (Realtek(R) Audio), Windows DirectSound (2 in, 0 out)
+   6 Primary Sound Driver, Windows DirectSound (0 in, 2 out)
+   7 Speakers (Realtek(R) Audio), Windows DirectSound (0 in, 2 out)
+   8 Speakers (Realtek(R) Audio), Windows WASAPI (0 in, 2 out)
+   9 Microphone Array (Realtek(R) Audio), Windows WASAPI (2 in, 0 out)
+  10 Input (), Windows WDM-KS (2 in, 0 out)
+  11 Output (@System32\drivers\bthhfenum.sys,#4;%1 Hands-Free HF Audio%0
+;(Kishore's S24 Ultra)), Windows WDM-KS (0 in, 1 out)
+  12 Input (@System32\drivers\bthhfenum.sys,#4;%1 Hands-Free HF Audio%0
+;(Kishore's S24 Ultra)), Windows WDM-KS (1 in, 0 out)
+  13 Microphone Array (Realtek HD Audio Mic Array input), Windows WDM-KS (2 in, 0 out)
+  14 Speakers 1 (Realtek HD Audio output with HAP), Windows WDM-KS (0 in, 2 out)
+  15 Speakers 2 (Realtek HD Audio output with HAP), Windows WDM-KS (0 in, 2 out)
+  16 PC Speaker (Realtek HD Audio output with HAP), Windows WDM-KS (2 in, 0 out)
+  17 Stereo Mix (Realtek HD Audio Stereo input), Windows WDM-KS (2 in, 0 out)
+  18 Headphones (Realtek HD Audio 2nd output), Windows WDM-KS (0 in, 2 out)
+  19 Microphone (Realtek HD Audio Mic input), Windows WDM-KS (2 in, 0 out)
+  20 Output (@System32\drivers\bthhfenum.sys,#4;%1 Hands-Free HF Audio%0
+;(Redmi 13C 5G)), Windows WDM-KS (0 in, 1 out)
+  21 Input (@System32\drivers\bthhfenum.sys,#4;%1 Hands-Free HF Audio%0
+;(Redmi 13C 5G)), Windows WDM-KS (1 in, 0 out)
+  22 Input (), Windows WDM-KS (2 in, 0 out)
+  23 Headphones (), Windows WDM-KS (0 in, 2 out)
+  24 Headset (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(OnePlus Nord Buds 3 Pro)), Windows WDM-KS (0 in, 1 out)
+  25 Headset (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(OnePlus Nord Buds 3 Pro)), Windows WDM-KS (1 in, 0 out)
+INFO:nova:Using default microphone [1]: Microphone Array (Realtek(R) Au (probe rms=0.29626)

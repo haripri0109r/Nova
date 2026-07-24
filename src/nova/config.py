@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     chrome_window_height: int = Field(default=900, ge=300)
     chrome_new_window_wait_s: float = Field(default=25.0, ge=3.0)
 
+    # Brightness step for voice commands -----------------------------------
+    nova_brightness_step: int = Field(default=10, ge=1, le=100)
+
     # Cache dir ----------------------------------------------------------
     nova_welcome_cache_dir: Optional[Path] = None
 

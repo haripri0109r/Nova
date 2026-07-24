@@ -11,3 +11,8 @@ SpeechRecognition>=3.10
 # Wheels can be missing on PyPI; reliable install on Windows:
 #   pip install pipwin && pipwin install pyaudio
 PyAudio>=0.2.13
+pycaw>=20181226
+wmi>=1.5.1
+pycaw>=20230226
+wmi>=1.5.1
+pywin32>=306
