@@ -24,7 +24,7 @@ log = logging.getLogger("nova")
 # -------------------------------------------------------------------------
 # Configuration constants
 # -------------------------------------------------------------------------
-DEFAULT_LAUNCH_THRESHOLD = 75   # Minimum rapidfuzz score to consider a match
+DEFAULT_LAUNCH_THRESHOLD = 55   # Minimum rapidfuzz score to consider a match
 DISAMBIGUATION_DELTA = 5        # Points within which multiple matches are ambiguous
 ALIASES = {
     "vs code": "Visual Studio Code",
