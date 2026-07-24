@@ -41,6 +41,16 @@ class Settings(BaseSettings):
     input_probe_s: float = Field(default=0.5, gt=0)
     input_silent_rms: float = Field(default=0.001, ge=0)
 
+    # --- VAD / Wake phrase ---------------------------------------------
+    vad_sample_rate: int = Field(default=16000, gt=0)
+    vad_frame_size: int = Field(default=512, gt=0)
+    vad_silence_ms: int = Field(default=500, ge=0)
+    vad_max_utterance_s: int = Field(default=30, gt=0)
+    vad_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    # --- Whisper --------------------------------------------------------
+    whisper_model: str = Field(default="base")
+
     # --- Vosk ----------------------------------------------------------
     vosk_model_path: Path = Field(default_factory=_default_vosk_model_path)
 
