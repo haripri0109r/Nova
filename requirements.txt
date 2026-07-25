@@ -17,3 +17,5 @@ pycaw>=20230226
 wmi>=1.5.1
 pywin32>=306
 faster-whisper>=1.0.0
+google-generativeai>=0.3.0
+torchaudio
