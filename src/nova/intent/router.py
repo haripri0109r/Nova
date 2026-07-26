@@ -1,22 +1,30 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from nova.agent import get_agent_orchestrator
 
 from .schema import Intent
-from nova.brain import get_brain
 
 log = logging.getLogger("nova.intent.router")
 
 
 class IntentRouter:
     """
-    Routes a validated Intent through the Nova Brain which in turn uses the
-    ControllerManager to execute the appropriate controller.
+    Routes a validated Intent through the Agent Orchestrator which uses
+    the SkillManager to execute the appropriate skill.
     """
 
     def __init__(self) -> None:
-        self._brain = get_brain()
+        self._orchestrator = None
+
+    def _get_orchestrator(self):
+        if self._orchestrator is None:
+            from nova.agent import get_agent_orchestrator
+            self._orchestrator = get_agent_orchestrator()
+        return self._orchestrator
 
     def route(self, intent: Intent) -> Dict[str, Any]:
         # Confidence guard – clarification path
@@ -26,19 +34,23 @@ class IntentRouter:
                 intent.intent,
                 intent.confidence,
             )
-            return {"status": "clarify", "message": "I’m not sure I understood. Could you re‑phrase?"}
+            return {"status": "clarify", "message": "I'm not sure I understood. Could you re‑phrase?"}
 
-        # Delegate to Brain (which forwards to ControllerManager)
+        # Delegate to Agent Orchestrator
         try:
-            # Build a minimal user‑text representation for the brain.
-            # The brain expects raw user text; we synthesize a short description.
-            user_text = f"[{intent.domain}] {intent.operation} {intent.action}"
-            result = self._brain.process(user_text)
-            log.debug("Brain returned: %s", result)
+            # Build a minimal user-text representation for the orchestrator.
+            # The orchestrator expects raw user text; we synthesize a short description.
+            user_text = f"[{intent.intent}] {intent.action} {intent.parameters}"
+            result = self._get_orchestrator().run(user_text)
+            log.debug("Orchestrator returned: %s", result)
             return result
         except Exception:  # pragma: no cover
-            log.exception("Brain execution failed for intent %s", intent.intent)
+            log.exception("Orchestrator execution failed for intent %s", intent.intent)
             return {"status": "error", "message": "Internal error while executing the command."}
+
+
+# Backwards compatibility alias
+SkillRouter = IntentRouter
 
 
 # ----------------------------------------------------------------------
