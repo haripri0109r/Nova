@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import time
 import wave
 from io import BytesIO
 from pathlib import Path
@@ -160,7 +161,7 @@ class WakePhraseListener:
                 start_time = None
                 while True:
                     if timeout is not None and start_time is not None:
-                        if (sd.default.timer() - start_time) > timeout:
+                        if (time.monotonic() - start_time) > timeout:
                             log.debug("Timeout waiting for speech start")
                             return None
 
@@ -174,7 +175,7 @@ class WakePhraseListener:
                     if prob > vad_thresh:          # speech
                         if not speech_started:
                             speech_started = True
-                            start_time = sd.default.timer()
+                            start_time = time.monotonic()
                             log.debug("VAD: speech start (p=%.2f)", prob)
                         silence_counter = 0
                     else:                           # silence / noise

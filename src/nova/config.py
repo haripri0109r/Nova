@@ -54,6 +54,28 @@ class Settings(BaseSettings):
     # --- Vosk ----------------------------------------------------------
     vosk_model_path: Path = Field(default_factory=_default_vosk_model_path)
 
+    # --- LLM Providers -------------------------------------------------
+    llm_use_ollama: bool = Field(default=True)
+    llm_ollama_model: str = Field(default="qwen3:8b")
+    llm_ollama_base_url: str = Field(default="http://localhost:11434")
+
+    llm_use_openrouter: bool = Field(default=True)
+    llm_openrouter_model: str = Field(default="qwen/qwen3-coder")
+    llm_openrouter_api_key: Optional[str] = Field(
+        default=None,
+        validation_alias="OPENROUTER_API_KEY",
+    )
+
+    llm_use_gemini: bool = Field(default=True)
+    llm_gemini_model: str = Field(default="gemini-2.0-flash")
+    llm_gemini_api_key: Optional[str] = Field(
+        default=None,
+        validation_alias="GEMINI_API_KEY",
+    )
+
+    # LLM Provider mode: True=dev (Ollama optional), False=prod (OpenRouter->Gemini)
+    llm_dev_mode: bool = Field(default=True, validation_alias="NOVA_LLM_DEV_MODE")
+
     # --- Logging -------------------------------------------------------
     nova_log_level: str = Field(default="INFO")
 
