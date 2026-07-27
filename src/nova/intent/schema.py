@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from typing import Literal, Optional
 
@@ -26,6 +27,12 @@ class IntentBase(BaseModel):
     intent: str = Field(..., description="High‑level domain, e.g. set_volume")
     action: Action
     confidence: float = Field(..., ge=0.0, le=1.0)
+    # Additional fields for compatibility with brain schema
+    domain: Optional[str] = None
+    operation: Optional[str] = None
+    reason: str = ""
+    source: str = "intent_engine"
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
 class VolumeIntent(IntentBase):

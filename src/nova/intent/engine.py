@@ -1,22 +1,20 @@
 from __future__ import annotations
 
-import json
 import logging
-import re
 from typing import Any, Dict, List, Optional
 
-from llama_cpp import Llama
+from nova.llm.manager import get_llm_manager
 
-from .loader import get_llm, ModelLoadError
 from .prompts import SYSTEM_PROMPT, FEW_SHOT
 from .schema import Intent, parse_intent, ValidationError
 
 log = logging.getLogger("nova.intent.engine")
 
+
 # ----------------------------------------------------------------------
 # Helper – build the chat‑completion payload expected by llama‑cpp
 # ----------------------------------------------------------------------
-def _build_messages(user_text: str) -> List[Dict[str, str]]:
+def _build_messages(user_text: str) -> list[dict[str, str]]:
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
     for ex in FEW_SHOT:
         msgs.append(ex)                       # few‑shot examples
@@ -36,8 +34,8 @@ class LocalIntentEngine:
 
     _MIN_CONFIDENCE = 0.75          # threshold defined in the spec
 
-    def __init__(self, llm: Optional[Llama] = None) -> None:
-        self._llm = llm or get_llm()
+    def __init__(self, llm_manager=None) -> None:
+        self._llm_manager = llm_manager or get_llm_manager()
 
     # --------------------------------------------------------------
     # Public API – used by the rest of Nova (unchanged signature)
@@ -47,18 +45,15 @@ class LocalIntentEngine:
         Convert *utterance* into a fully validated `Intent` object.
         Never raises – on any error returns a synthetic low‑confidence
         `Intent` (`confidence = 0.0`) which the router treats as
-        “ask user for clarification”.
+        "ask user for clarification".
         """
         if not utterance or not utterance.strip():
-            log.debug("Empty utterance → synthetic low‑confidence intent")
+            log.debug("Empty utterance -> synthetic low-confidence intent")
             return self._synthetic("empty_utterance")
 
         try:
             raw = self._call_model(utterance)
-        except ModelLoadError:
-            log.exception("Model unavailable – falling back to clarification")
-            return self._synthetic("model_unavailable")
-        except Exception:                      # pragma: no cover – defensive
+        except Exception:                      # pragma: no cover - defensive
             log.exception("Unexpected error during intent inference")
             return self._synthetic("inference_error")
 
@@ -67,16 +62,16 @@ class LocalIntentEngine:
         # ----------------------------------------------------------
         try:
             intent = parse_intent(raw)
-        except ValidationError as ve:
-            log.warning("Model returned malformed JSON: %s – raw: %s", ve, raw)
+        except Exception as ve:
+            log.warning("Model returned malformed JSON: %s - raw: %s", ve, raw)
             return self._synthetic("validation_error")
 
         # ----------------------------------------------------------
-        # Confidence gate – keep the original confidence for logging
+        # Confidence gate - keep the original confidence for logging
         # ----------------------------------------------------------
         if intent.confidence < self._MIN_CONFIDENCE:
             log.info(
-                "Intent confidence %.2f < %.2f – will ask clarification",
+                "Intent confidence %.2f < %.2f - will ask clarification",
                 intent.confidence,
                 self._MIN_CONFIDENCE,
             )
@@ -85,49 +80,37 @@ class LocalIntentEngine:
     # --------------------------------------------------------------
     # Internal helpers
     # --------------------------------------------------------------
-    def _call_model(self, text: str) -> Dict[str, Any]:
-        """Send prompt to llama‑cpp and return *parsed* JSON dict."""
-        messages = _build_messages(text)
-
-        # llama‑cpp’s chat completion returns a dict with a `choices` list
-        resp = self._llm.create_chat_completion(
-            messages=messages,
-            temperature=0.0,          # deterministic
-            max_tokens=256,
-            top_p=1.0,
-            stop=["\n"],              # stop at first newline – model emits single‑line JSON
-        )
-        content = resp["choices"][0]["message"]["content"].strip()
-        log.debug("Raw model output: %s", content)
-
-        # Model may wrap JSON in code fences – strip them
-        content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content, flags=re.IGNORECASE)
-
-        return json.loads(content)
+    def _call_model(self, text: str) -> dict:
+        """Send prompt to LLM via LLMManager and return *parsed* JSON dict."""
+        # LLMManager returns a dict with intent, action, target, level
+        result = self._llm_manager.generate_intent(text)
+        if result is None:
+            raise RuntimeError("All LLM providers failed")
+        return result
 
     @staticmethod
-    def _synthetic(reason: str) -> Intent:
+    def _synthetic(reason: str):
         """
         Produce a *fallback* Intent that the router will treat as
-        “confidence too low → ask user”.  Uses a dummy intent name so the
+        "confidence too low -> ask user".  Uses a dummy intent name so the
         router can log the reason.
         """
         from .schema import IntentBase, Action
         return IntentBase(
             intent=f"fallback_{reason}",
-            action=Action.SET,          # placeholder – never executed
+            action=Action.SET,          # placeholder - never executed
             confidence=0.0,
         )
 
 
 # ----------------------------------------------------------------------
-# Backwards‑compatible factory used by existing Nova code
+# Backwards-compatible factory used by existing Nova code
 # ----------------------------------------------------------------------
-_engine_instance: Optional[LocalIntentEngine] = None
+_engine_instance = None
 
 
-def get_intent_engine() -> LocalIntentEngine:
-    """Singleton accessor – mirrors the old `nova.intent.get_intent_engine`."""
+def get_intent_engine() -> "LocalIntentEngine":
+    """Singleton accessor - mirrors the old `nova.intent.get_intent_engine`."""
     global _engine_instance
     if _engine_instance is None:
         _engine_instance = LocalIntentEngine()

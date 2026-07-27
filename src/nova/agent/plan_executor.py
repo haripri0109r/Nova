@@ -12,39 +12,22 @@ if TYPE_CHECKING:
 
 from nova.events import get_event_bus
 from nova.events.events import IntentResolvedEvent
+from nova.intent.schema import Intent
 from nova.skills.manager import get_skill_manager
 
 logger = logging.getLogger("nova.agent.plan_executor")
 
 
-def _get_intent_name(intent: Any) -> str:
-    """Get intent name from any intent type (brain.schemas.Intent or intent.schema types)."""
-    # brain.schemas.Intent has 'intent' field
-    if hasattr(intent, 'intent') and intent.intent:
+def _get_intent_name(intent: Intent) -> str:
+    """Get intent name from unified intent model."""
+    if intent.intent:
         return intent.intent
-    # brain.schemas.Intent has domain + operation - construct intent name
-    if hasattr(intent, 'domain') and hasattr(intent, 'operation'):
-        return f"{intent.domain}_{intent.operation}"
-    # intent.schema types (VolumeIntent, BrightnessIntent, AppIntent) have 'intent' as literal
-    if hasattr(intent, '__pydantic_extra__') and intent.__pydantic_extra__:
-        return intent.__pydantic_extra__.get('intent', 'unknown')
     # Fallback: construct from class name
     return intent.__class__.__name__.replace('Intent', '').lower()
 
 
-def _extract_parameters(intent: Any) -> Dict[str, Any]:
-    """Extract parameters from intent (works with both brain.schemas.Intent and intent.schema types)."""
-    # brain.schemas.Intent has a parameters field
-    if hasattr(intent, 'parameters') and intent.parameters:
-        params = intent.parameters
-        if hasattr(params, 'dict'):
-            return params.dict()
-        elif hasattr(params, 'model_dump'):
-            return params.model_dump()
-        else:
-            return dict(params)
-
-    # intent.schema types (VolumeIntent, BrightnessIntent, AppIntent) have individual fields
+def _extract_parameters(intent: Intent) -> Dict[str, Any]:
+    """Extract parameters from unified intent model."""
     params = {}
     for field in ['amount', 'level', 'application']:
         if hasattr(intent, field):
@@ -68,25 +51,15 @@ class PlanExecutor:
         self._skill_manager = skill_manager or get_skill_manager()
         self._event_bus = event_bus or get_event_bus()
 
-    def _intent_to_dict(self, intent: Any) -> Dict[str, Any]:
-        """Convert Pydantic Intent to dict for SkillManager."""
-        data = intent.dict()
-        # Flatten parameters - works for both brain.schemas.Intent and intent.schema types
-        if "parameters" in data and data["parameters"]:
-            params = data.pop("parameters")
-            if hasattr(params, "dict"):
-                params = params.dict()
-            elif hasattr(params, "model_dump"):
-                params = params.model_dump()
-            data.update(params)
-        else:
-            # intent.schema types have fields directly
-            for key, value in list(data.items()):
-                if hasattr(value, 'value'):  # Enum
-                    data[key] = value.value
+    def _intent_to_dict(self, intent: Intent) -> Dict[str, Any]:
+        """Convert unified Intent to dict for SkillManager."""
+        data = intent.model_dump()
+        # Flatten parameters - unified model has fields directly
+        for key, value in list(data.items()):
+            if hasattr(value, 'value'):  # Enum
+                data[key] = value.value
         # Ensure 'intent' field is present for SkillManager (required field)
-        if "intent" not in data:
-            data["intent"] = _get_intent_name(intent)
+        data["intent"] = _get_intent_name(intent)
         return data
 
     def execute(

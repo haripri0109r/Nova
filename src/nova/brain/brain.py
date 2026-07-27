@@ -5,27 +5,15 @@ Delegates to AgentOrchestrator for intent parsing and skill execution.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nova.agent import get_agent_orchestrator
+    from nova.llm.manager import LLMManager
 
 from nova.events import get_event_bus, IntentResolvedEvent, UserCommandReceivedEvent, GoalCompletedEvent
 
 logger = logging.getLogger("nova.brain")
-
-# -------------------------------------------------------------------------
-# Configuration – all via env vars with sensible defaults
-# -------------------------------------------------------------------------
-MODEL_PATH = os.getenv(
-    "NOVA_BRAIN_MODEL",
-    "models/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf",
-)
-CTX_SIZE = int(os.getenv("NOVA_BRAIN_CTX", "2048"))
-N_THREADS = int(os.getenv("NOVA_BRAIN_THREADS", str(os.cpu_count() or 4)))
-N_GPU_LAYERS = int(os.getenv("NOVA_BRAIN_GPU_LAYERS", "0"))
-TEMPERATURE = float(os.getenv("NOVA_BRAIN_TEMP", "0.0"))  # deterministic
 
 
 # -------------------------------------------------------------------------
@@ -37,9 +25,12 @@ class Brain:
         brain.process(user_text)  -> execution result dict
     """
 
-    def __init__(self) -> None:
+    def __init__(self, llm_manager: Optional["LLMManager"] = None) -> None:
         # Import lazily to avoid circular import
         from nova.agent import get_agent_orchestrator
+        from nova.llm.manager import get_llm_manager
+        
+        self._llm_manager = llm_manager or get_llm_manager()
         self._orchestrator = get_agent_orchestrator()
         self._event_bus = get_event_bus()
         self._conversation_context = ""  # could be extended for multi-turn

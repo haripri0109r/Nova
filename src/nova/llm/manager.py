@@ -29,7 +29,7 @@ class LLMManager:
         self._initialized = False
         self._dev_mode = dev_mode
 
-    def initialize(self) -> bool:
+    async def initialize(self) -> bool:
         """Initialize all enabled providers in priority order based on mode."""
         if self._initialized:
             return True
@@ -59,7 +59,25 @@ class LLMManager:
 
     def _init_dev_providers(self) -> None:
         """Initialize providers for development mode."""
-        # Ollama (local, optional - never blocks)
+        # 1. Llama.cpp (local, primary for dev)
+        try:
+            from .llama_cpp_client import LlamaCppProvider
+
+            llama_cpp = LlamaCppProvider(
+                model_path=settings.llm_llama_cpp_model,
+                ctx_size=settings.llm_llama_cpp_ctx,
+                n_threads=settings.llm_llama_cpp_threads,
+                n_gpu_layers=settings.llm_llama_cpp_gpu_layers,
+            )
+            if llama_cpp.initialize():
+                self._providers.append(llama_cpp)
+                log.info("Llama.cpp provider initialized: %s", settings.llm_llama_cpp_model)
+            else:
+                log.debug("Llama.cpp not available")
+        except Exception as exc:
+            log.debug("Llama.cpp provider unavailable: %s", exc)
+
+        # 2. Ollama (local, optional - never blocks)
         if settings.llm_use_ollama:
             try:
                 from .ollama_client import OllamaClient

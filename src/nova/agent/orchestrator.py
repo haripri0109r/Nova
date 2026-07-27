@@ -22,7 +22,7 @@ from nova.events.events import (
     GoalFailedEvent,
 )
 from nova.intent.engine import get_intent_engine
-from nova.intent.schema import VolumeIntent, BrightnessIntent, AppIntent, Intent as IntentSchema
+from nova.intent.schema import Intent
 from nova.skills.manager import get_skill_manager
 
 logger = logging.getLogger("nova.agent.orchestrator")
@@ -75,7 +75,7 @@ class AgentOrchestrator:
         # 3. Handle parsing result
         if isinstance(parsed, Plan):
             return self._execute_plan(parsed, user_text, start_time, context)
-        elif isinstance(parsed, (VolumeIntent, BrightnessIntent, AppIntent)):
+        elif isinstance(parsed, Intent):
             return self._execute_intent(parsed, user_text, start_time, context)
         else:
             logger.warning("Unknown parse result type: %s", type(parsed))
@@ -83,7 +83,7 @@ class AgentOrchestrator:
 
     def _execute_intent(
         self,
-        intent: "IntentSchema",
+        intent: Intent,
         user_text: str,
         start_time: float,
         context: Optional[Dict[str, Any]] = None,
@@ -224,19 +224,8 @@ class AgentOrchestrator:
         result["elapsed_ms"] = round(elapsed * 1000, 2)
         return result
 
-    def _extract_parameters(self, intent: Any) -> Dict[str, Any]:
-        """Extract parameters from intent (works with both brain.schemas.Intent and intent.schema types)."""
-        # brain.schemas.Intent has a parameters field
-        if hasattr(intent, 'parameters') and intent.parameters:
-            params = intent.parameters
-            if hasattr(params, 'dict'):
-                return params.dict()
-            elif hasattr(params, 'model_dump'):
-                return params.model_dump()
-            else:
-                return dict(params)
-
-        # intent.schema types (VolumeIntent, BrightnessIntent, AppIntent) have individual fields
+    def _extract_parameters(self, intent: Intent) -> Dict[str, Any]:
+        """Extract parameters from intent (unified model)."""
         params = {}
         for field in ['amount', 'level', 'application']:
             if hasattr(intent, field):
@@ -245,40 +234,22 @@ class AgentOrchestrator:
                     params[field] = value
         return params
 
-    def _get_intent_name(self, intent: Any) -> str:
-        """Get intent name from any intent type (brain.schemas.Intent or intent.schema types)."""
-        # brain.schemas.Intent has 'intent' field (for backwards compatibility)
-        if hasattr(intent, 'intent') and intent.intent:
+    def _get_intent_name(self, intent: Intent) -> str:
+        """Get intent name from unified intent model."""
+        # The unified Intent model has 'intent' field
+        if intent.intent:
             return intent.intent
-        # brain.schemas.Intent has domain + operation - construct intent name
-        if hasattr(intent, 'domain') and hasattr(intent, 'operation'):
-            return f"{intent.domain}_{intent.operation}"
-        # intent.schema types (VolumeIntent, BrightnessIntent, AppIntent) have 'intent' as literal
-        # but it might be stored in __pydantic_extra__
-        if hasattr(intent, '__pydantic_extra__') and intent.__pydantic_extra__:
-            return intent.__pydantic_extra__.get('intent', 'unknown')
         # Fallback: construct from class name
         return intent.__class__.__name__.replace('Intent', '').lower()
 
-    def _intent_to_dict(self, intent: Any) -> Dict[str, Any]:
+    def _intent_to_dict(self, intent: Intent) -> Dict[str, Any]:
         """Convert Intent Pydantic model to dict for SkillManager."""
-        data = intent.dict()
-        # Flatten parameters - works for both brain.schemas.Intent and intent.schema types
-        if "parameters" in data and data["parameters"]:
-            params = data.pop("parameters")
-            if hasattr(params, "dict"):
-                params = params.dict()
-            elif hasattr(params, "model_dump"):
-                params = params.model_dump()
-            data.update(params)
-        else:
-            # intent.schema types (VolumeIntent, BrightnessIntent, AppIntent) have fields directly
-            # They are already in data, just need to handle enums
-            for key, value in list(data.items()):
-                if hasattr(value, 'value'):  # Enum
-                    data[key] = value.value
+        data = intent.model_dump()
+        # Flatten parameters - unified model has fields directly
+        for key, value in list(data.items()):
+            if hasattr(value, 'value'):  # Enum
+                data[key] = value.value
         # Ensure 'intent' field is present for SkillManager (required field)
-        # Use computed intent name, not the raw field which may be missing/empty
         data["intent"] = self._get_intent_name(intent)
         return data
 

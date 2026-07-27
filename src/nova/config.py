@@ -76,6 +76,15 @@ class Settings(BaseSettings):
     # LLM Provider mode: True=dev (Ollama optional), False=prod (OpenRouter->Gemini)
     llm_dev_mode: bool = Field(default=True, validation_alias="NOVA_LLM_DEV_MODE")
 
+    # Llama.cpp (local) ---------------------------------------------------
+    llm_use_llama_cpp: bool = Field(default=True)
+    llm_llama_cpp_model: str = Field(default="models/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf")
+    llm_llama_cpp_base_url: str = Field(default="")  # not used for local
+    llm_llama_cpp_ctx: int = Field(default=2048)
+    llm_llama_cpp_threads: int = Field(default=4)
+    llm_llama_cpp_gpu_layers: int = Field(default=0)
+    llm_llama_cpp_temp: float = Field(default=0.0)
+
     # --- Logging -------------------------------------------------------
     nova_log_level: str = Field(default="INFO")
 

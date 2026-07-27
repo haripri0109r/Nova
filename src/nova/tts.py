@@ -60,6 +60,47 @@ def _save_pcm_wav_file(path: Path, pcm_bytes: bytes, sample_rate: int) -> None:
         raise
 
 
+def say(text: str) -> None:
+    """Speak arbitrary text using ElevenLabs TTS."""
+    if not text or not text.strip():
+        return
+    vid, model_id, output_format, pcm_rate = elevenlabs_env_config()
+    if not vid:
+        log.warning("Set ELEVENLABS_VOICE_ID in the environment for ElevenLabs TTS.")
+        return
+    api_key = settings.elevenlabs_api_key
+    if not api_key:
+        log.warning("Set ELEVENLABS_API_KEY in the environment for ElevenLabs TTS.")
+        return
+    try:
+        from elevenlabs.client import ElevenLabs
+    except ImportError:
+        log.warning("Install dependencies: pip install -r requirements.txt")
+        return
+    try:
+        client = ElevenLabs(api_key=api_key)
+        chunks = client.text_to_speech.convert(
+            voice_id=vid,
+            text=text,
+            model_id=model_id,
+            output_format=output_format,
+        )
+        raw = b"".join(chunks)
+    except Exception as e:
+        log.warning("ElevenLabs TTS failed: %s", e)
+        return
+    if not raw:
+        log.warning("ElevenLabs returned empty audio.")
+        return
+    pcm_i16 = np.frombuffer(raw, dtype=np.int16)
+    pcm_f = pcm_i16.astype(np.float32) / 32768.0
+    try:
+        sd.play(pcm_f, pcm_rate)
+        sd.wait()
+    except Exception as e:
+        log.warning("Could not play ElevenLabs audio: %s", e)
+
+
 def say_nova_welcome() -> None:
     if not settings.nova_welcome_enabled or not settings.nova_welcome_phrase.strip():
         return
