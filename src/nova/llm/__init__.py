@@ -1,21 +1,17 @@
 """
-Nova LLM Package - Provider-based LLM architecture.
-
-Providers (in priority order):
-1. Ollama - Local LLM inference
-2. OpenRouter - Free cloud models
-3. Gemini - Google Generative AI (fallback)
+Nova LLM Package.
 """
-
-from nova.llm.provider import BaseLLMProvider, LLMProvider
-from nova.llm.gemini_client import GeminiClient
-from nova.llm.ollama_client import OllamaClient
-from nova.llm.openrouter_client import OpenRouterClient
+from .engine import LLMEngine, get_llm_engine
+from .models import (
+    ExecutionRequest,
+    ExecutionResponse,
+)
 
 __all__ = [
-    "LLMProvider",
-    "BaseLLMProvider",
-    "GeminiClient",
-    "OllamaClient",
-    "OpenRouterClient",
+    # Engine
+    "LLMEngine",
+    "get_llm_engine",
+    # Data models
+    "ExecutionRequest",
+    "ExecutionResponse",
 ]

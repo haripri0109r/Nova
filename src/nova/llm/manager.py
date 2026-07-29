@@ -1,201 +1,221 @@
-"""
-LLM Provider Manager - Manages multiple LLM providers with automatic fallback.
-"""
-
+"""Provider registry + life‑cycle – completely hidden from the rest of Nova."""
 from __future__ import annotations
-
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Optional, List, Dict, Any
+from dataclasses import dataclass, field
 
-from ..config import settings
+from .providers import BaseLLMProvider, PlaceholderProvider, create_provider, get_available_providers
+from .config import LLMEngineConfig
+from .models import ExecutionRequest, ExecutionResponse
+from .parser import get_parser
+from .exceptions import LLMEngineError
 
-from .provider import BaseLLMProvider, LLMProvider
+_log = logging.getLogger("nova.llm.manager")
 
-log = logging.getLogger("nova.llm.manager")
+
+@dataclass
+class LLMManagerConfig:
+    default_provider: str = "placeholder"
+    providers: Dict[str, Any] = field(default_factory=dict)
 
 
 class LLMManager:
     """
-    Manages LLM providers with automatic fallback.
-
-    Provider priority modes:
-    - Development: Ollama (optional, local) → Rule Engine fallback
-    - Production:  OpenRouter (free cloud) → Gemini Flash (Google API)
+    Provider registry + life‑cycle – completely hidden from the rest of Nova.
     """
 
-    def __init__(self, dev_mode: bool = True) -> None:
-        self._providers: List[BaseLLMProvider] = []
-        self._current_provider: Optional[BaseLLMProvider] = None
+    def __init__(self, config: Optional[LLMManagerConfig] = None):
+        self.config = config or LLMManagerConfig()
+        self._providers: Dict[str, BaseLLMProvider] = {}
+        self._current_provider: Optional[str] = None
         self._initialized = False
-        self._dev_mode = dev_mode
+        self._parser = None
 
-    async def initialize(self) -> bool:
-        """Initialize all enabled providers in priority order based on mode."""
+    async def initialize(self, config: Optional[dict] = None) -> bool:
+        """Initialize the LLM manager and all providers."""
         if self._initialized:
             return True
 
-        self._providers.clear()
+        _log.info("Initializing LLM Manager...")
 
-        if self._dev_mode:
-            # Development mode: Ollama optional, then rules fallback
-            self._init_dev_providers()
-        else:
-            # Production mode: OpenRouter -> Gemini
-            self._init_prod_providers()
-
-        self._initialized = True
-
-        if not self._providers:
-            if self._dev_mode:
-                log.info("No LLM providers available in dev mode - will use rule engine")
-            else:
-                log.warning("No LLM providers available in prod mode!")
-            return False
-
-        log.info("LLM Manager initialized (%s) with %d providers: %s",
-                 "dev" if self._dev_mode else "prod",
-                 len(self._providers), [p.name for p in self._providers])
-        return True
-
-    def _init_dev_providers(self) -> None:
-        """Initialize providers for development mode."""
-        # 1. Llama.cpp (local, primary for dev)
         try:
-            from .llama_cpp_client import LlamaCppProvider
+            # Initialize parser
+            from .parser import get_parser
+            self._parser = get_parser()
 
-            llama_cpp = LlamaCppProvider(
-                model_path=settings.llm_llama_cpp_model,
-                ctx_size=settings.llm_llama_cpp_ctx,
-                n_threads=settings.llm_llama_cpp_threads,
-                n_gpu_layers=settings.llm_llama_cpp_gpu_layers,
-            )
-            if llama_cpp.initialize():
-                self._providers.append(llama_cpp)
-                log.info("Llama.cpp provider initialized: %s", settings.llm_llama_cpp_model)
+            # Initialize providers based on config
+            if self.config.providers:
+                for name, provider_config in self.config.providers.items():
+                    await self._add_provider(name, provider_config)
             else:
-                log.debug("Llama.cpp not available")
-        except Exception as exc:
-            log.debug("Llama.cpp provider unavailable: %s", exc)
+                # Default placeholder
+                await self._add_provider("placeholder", {"provider": "placeholder"})
 
-        # 2. Ollama (local, optional - never blocks)
-        if settings.llm_use_ollama:
-            try:
-                from .ollama_client import OllamaClient
+            self._initialized = True
+            _log.info("LLM Manager initialized successfully")
+            return True
 
-                ollama = OllamaClient(
-                    model=settings.llm_ollama_model,
-                    base_url=settings.llm_ollama_base_url,
-                )
-                if ollama.initialize():
-                    self._providers.append(ollama)
-                    log.info("Ollama provider initialized: %s", settings.llm_ollama_model)
-                else:
-                    log.debug("Ollama not available (optional in dev mode)")
-            except Exception as exc:
-                log.debug("Ollama provider unavailable: %s", exc)
+        except Exception as e:
+            _log.error(f"LLM Manager initialization failed: {e}")
+            raise
 
-    def _init_prod_providers(self) -> None:
-        """Initialize providers for production mode."""
-        # 1. OpenRouter (free cloud models)
-        if settings.llm_use_openrouter:
-            try:
-                from .openrouter_client import OpenRouterClient
+    async def _add_provider(self, name: str, config: dict):
+        """Add a provider instance."""
+        provider_type = config.get("provider", "placeholder")
+        provider_class = self._get_provider_class(provider_type)
+        if provider_class:
+            provider = provider_class(config)
+            await provider.initialize()
+            self._providers[name] = provider
+            _log.info(f"Registered LLM provider: {name} ({provider_type})")
 
-                openrouter = OpenRouterClient(
-                    api_key=settings.llm_openrouter_api_key,
-                    model=settings.llm_openrouter_model,
-                )
-                if openrouter.initialize():
-                    self._providers.append(openrouter)
-                    log.info("OpenRouter provider initialized: %s", settings.llm_openrouter_model)
-                else:
-                    log.warning("OpenRouter provider failed to initialize")
-            except Exception as exc:
-                log.warning("OpenRouter provider error: %s", exc)
+    def _get_provider_class(self, provider_type: str):
+        """Get provider class from type."""
+        from .providers import (
+            PlaceholderProvider,
+            _get_provider_class
+        )
+        from .types import LLMProvider
 
-        # 2. Gemini Flash (fallback)
-        if settings.llm_use_gemini:
-            try:
-                from .gemini_client import GeminiClient
-
-                gemini = GeminiClient(api_key=settings.llm_gemini_api_key)
-                if gemini.initialize():
-                    self._providers.append(gemini)
-                    log.info("Gemini provider initialized: %s", settings.llm_gemini_model)
-                else:
-                    log.warning("Gemini provider failed to initialize")
-            except Exception as exc:
-                log.warning("Gemini provider error: %s", exc)
-
-    def generate_intent(self, transcript: str) -> Dict[str, Any]:
-        """
-        Generate intent using the best available provider with automatic fallback.
-
-        Tries providers in order, falls back on failure.
-        Logs which provider was used.
-        """
-        if not self._initialized:
-            self.initialize()
-
-        if not self._providers:
-            log.debug("No LLM providers available")
+        try:
+            provider_enum = LLMProvider(provider_type)
+            return _get_provider_class(provider_enum)
+        except ValueError:
+            _log.warning(f"Unknown provider type: {provider_type}")
             return None
 
-        for provider in self._providers:
-            if not provider.is_available:
-                continue
-
+    async def cleanup(self) -> None:
+        """Cleanup all providers."""
+        for name, provider in self._providers.items():
             try:
-                log.debug("Trying provider: %s", provider.name)
-                result = provider.generate_intent(transcript)
-                self._current_provider = provider
-                log.info("Intent generated by %s: %s", provider.name, result)
-                return result
+                await provider.cleanup()
+            except Exception as e:
+                _log.warning(f"Error cleaning up provider {name}: {e}")
+        self._providers.clear()
+        self._initialized = False
 
-            except Exception as exc:
-                log.warning("Provider %s failed: %s, trying next...", provider.name, exc)
-                # Mark provider as unhealthy
-                provider._initialized = False
-                continue
+    async def process(self, text: str, session_id: str = "default", 
+                      task_type: str = "conversation",
+                      context: Optional[dict] = None) -> ExecutionResponse:
+        """
+        Process text through the LLM pipeline.
+        
+        Flow:
+        1. Build context (history, tools, system prompt)
+        2. Build prompt
+        3. Select provider
+        4. Get LLM response
+        5. Parse and validate response
+        6. Store in conversation history
+        7. Return structured response
+        """
+        if not self._initialized:
+            await self.initialize()
 
-        # All providers failed
-        log.error("All LLM providers failed, returning unknown intent")
-        return {"intent": "unknown", "action": "none"}
+        # Get or create conversation
+        conv_manager = get_conversation_manager()
+        session = conv_manager.get_session(session_id)
 
-    def health_check_all(self) -> Dict[str, bool]:
-        """Check health of all providers."""
-        results = {}
-        for provider in self._providers:
-            results[provider.name] = provider.health_check()
-        return results
+        # Add user message to history
+        conv_manager.add_message(session_id, "user", text)
 
-    def get_current_provider(self) -> Optional[str]:
-        """Get name of last successful provider."""
-        return self._current_provider.name if self._current_provider else None
+        # Build context
+        context_builder = get_context_builder()
+        context = context_builder.build_context(
+            session_id=session_id,
+            user_text=text,
+            system_prompt=self._get_system_prompt(),
+            available_tools=self._get_tool_definitions()
+        )
+
+        # Build LLM request
+        from .models import LLMRequest, LLMMessage
+        messages = [LLMMessage(role="user", content=text)]
+        
+        # Add conversation history
+        history = conv_manager.get_history(session_id, limit=10)
+        for msg in history:
+            messages.insert(0, LLMMessage(role=msg["role"], content=msg["content"]))
+
+        request = LLMRequest(
+            messages=messages,
+            task_type="conversation"
+        )
+
+        # Select provider
+        provider = self._select_provider()
+
+        # Get response from provider
+        response = await provider.complete(request)
+
+        # Parse response
+        structured = self._parser.parse(response.content)
+
+        # Store assistant response
+        conv_manager.add_message(session_id, "assistant", structured.response_text)
+
+        return ExecutionResponse(
+            requires_execution=structured.requires_execution,
+            response_text=structured.response_text,
+            actions=structured.actions,
+            provider=provider.name,
+        )
+
+    def _get_system_prompt(self) -> str:
+        """Get system prompt for the LLM."""
+        from .prompt_builder import SYSTEM_PROMPT
+        return SYSTEM_PROMPT
+
+    def _get_tool_definitions(self) -> List[Dict]:
+        """Get available tool definitions."""
+        from .prompt_builder import TOOL_DEFINITIONS
+        return TOOL_DEFINITIONS
+
+    def _select_provider(self):
+        """Select best available provider."""
+        if not self._providers:
+            # Fallback to placeholder
+            from .providers import PlaceholderProvider
+            return PlaceholderProvider()
+
+        # Return first available provider
+        for name, provider in self._providers.items():
+            if provider.is_initialized:
+                self._current_provider = name
+                return provider
+
+        # Fallback
+        from .providers import PlaceholderProvider
+        return PlaceholderProvider()
 
     def get_available_providers(self) -> List[str]:
-        """Get list of available provider names."""
-        return [p.name for p in self._providers if p.is_available]
+        """Get list of available providers."""
+        return list(self._providers.keys())
 
-    def get_all_providers(self) -> List[str]:
-        """Get list of all provider names (including unavailable)."""
-        return [p.name for p in self._providers]
+    def get_current_provider(self) -> Optional[str]:
+        return self._current_provider
 
-    def set_dev_mode(self, dev_mode: bool) -> None:
-        """Switch between dev and prod mode (reinitializes)."""
-        if self._dev_mode != dev_mode:
-            self._dev_mode = dev_mode
-            self._initialized = False
-            self._providers.clear()
+    async def health_check(self) -> dict:
+        """Check health of all providers."""
+        health = {}
+        for name, provider in self._providers.items():
+            try:
+                health[name] = {
+                    "initialized": provider.is_initialized,
+                    "name": provider.name
+                }
+            except Exception as e:
+                health[name] = {"error": str(e)}
+        return health
 
 
-# Global manager instance
-_manager: Optional[LLMManager] = None
+# Global instance
+_manager = None
 
 
-def get_llm_manager(dev_mode: bool = True) -> LLMManager:
-    """Get global LLM manager instance."""
+def get_llm_manager(config: LLMManagerConfig = None) -> LLMManager:
+    """Get or create global LLM Manager instance."""
     global _manager
     if _manager is None:
-        _manager = LLMManager(dev_mode=dev_mode)
+        _manager = LLMManager(config)
     return _manager

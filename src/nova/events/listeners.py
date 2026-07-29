@@ -71,7 +71,8 @@ class ListenerRegistry:
         once: bool = False,
     ) -> None:
         """Programmatic registration returning an unsubscribe callable."""
-        from nova.events import get_event_bus
+        
+        from .event_bus import get_event_bus
         bus = get_event_bus()
         unsub = bus.subscribe(
             event_type=event_type,
