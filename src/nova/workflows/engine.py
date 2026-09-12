@@ -3,7 +3,9 @@ WorkflowEngine – orchestrates execution of a Workflow DAG.
 """
 from __future__ import annotations
 import asyncio
+import copy
 import logging
+import uuid
 from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional, Set
 
@@ -46,14 +48,23 @@ class WorkflowEngine:
         executed_nodes: List["Node"] = []
 
         try:
-            # Build adjacency and indegree
+            # Build name to id mapping
+            name_to_id = {node.name: node.id for node in workflow.nodes}
+            id_to_node = {node.id: node for node in workflow.nodes}
+            
+            # Validate all edge references exist
+            self._validate_edge_references(workflow, name_to_id)
+            
+            # Build adjacency and indegree using node ids
             adj: Dict[str, List[str]] = defaultdict(list)
             indegree: Dict[str, int] = {node.id: 0 for node in workflow.nodes}
             for edge in workflow.edges:
                 # Skip conditional edges; they are handled by ConditionNode logic
                 if edge.condition is not None:
                     continue
-                frm, to = edge.from_node, edge.to_node
+                # Resolve names to ids
+                frm = name_to_id[edge.from_node]
+                to = name_to_id[edge.to_node]
                 adj[frm].append(to)
                 indegree[to] += 1
 
@@ -94,8 +105,9 @@ class WorkflowEngine:
                     indegree[succ_id] -= 1
                     if indegree[succ_id] == 0:
                         # find node object
-                        succ_node = next(n for n in workflow.nodes if n.id == succ_id)
-                        ready.append(succ_node)
+                        succ_node = id_to_node.get(succ_id)
+                        if succ_node:
+                            ready.append(succ_node)
 
             workflow.status = WorkflowStatus.COMPLETED
             self._workflow_status[workflow.id] = workflow.status
@@ -108,14 +120,60 @@ class WorkflowEngine:
         finally:
             self._running_workflows.pop(workflow.id, None)
 
-    def run_workflow(self, workflow: Workflow, *, context: Optional[Dict[str, Any]] = None, **kwargs: Any) -> str:
+    def _validate_edge_references(self, workflow: Workflow, name_to_id: Dict[str, str]) -> None:
+        """
+        Validate that all edge references point to existing nodes.
+        Raises ValueError with clear message if any reference is invalid.
+        """
+        existing_names = set(name_to_id.keys())
+        existing_ids = set(name_to_id.values())
+        
+        for edge in workflow.edges:
+            # Skip conditional edges; they are handled by ConditionNode logic
+            if edge.condition is not None:
+                continue
+            
+            # Check from_node
+            if edge.from_node not in existing_names and edge.from_node not in existing_ids:
+                raise ValueError(
+                    f"Workflow edge references unknown node '{edge.from_node}' "
+                    f"(available: {sorted(existing_names)})"
+                )
+            
+            # Check to_node
+            if edge.to_node not in existing_names and edge.to_node not in existing_ids:
+                raise ValueError(
+                    f"Workflow edge references unknown node '{edge.to_node}' "
+                    f"(available: {sorted(existing_names)})"
+                )
+
+    class _WorkflowTask(str):
+        """A workflow ID string that is also awaitable."""
+        def __new__(cls, workflow_id: str, task: asyncio.Task):
+            obj = str.__new__(cls, workflow_id)
+            obj._task = task
+            return obj
+        
+        def __await__(self):
+            return self._task.__await__()
+        
+        def result(self):
+            return self._task.result()
+
+    def run_workflow(self, workflow: Workflow, *, context: Optional[Dict[str, Any]] = None, **kwargs: Any) -> "_WorkflowTask":
         """
         Execute a workflow to completion and return its ID.
         The workflow runs in the background; this method returns immediately with the workflow ID.
+        The returned object is both a string (workflow ID) and awaitable.
         """
+        # Clone the workflow to allow concurrent runs of the same workflow definition
+        workflow_copy = copy.deepcopy(workflow)
+        workflow_copy.id = uuid.uuid4().hex  # Generate new unique ID
+        workflow_copy.status = WorkflowStatus.RUNNING
+        self._workflow_status[workflow_copy.id] = WorkflowStatus.RUNNING
         # schedule the workflow execution in the background
-        asyncio.create_task(self.run(workflow, initial_context=context))
-        return workflow.id
+        task = asyncio.create_task(self.run(workflow_copy, initial_context=context))
+        return self._WorkflowTask(workflow_copy.id, task)
 
     def get_workflow_status(self, workflow_id: str) -> Dict[str, str]:
         """
@@ -151,12 +209,22 @@ class WorkflowEngine:
         wf = self._running_workflows.get(workflow_id)
         if wf:
             wf.status = WorkflowStatus.PAUSED
+            self._workflow_status[workflow_id] = WorkflowStatus.PAUSED
 
     async def resume(self, workflow_id: str) -> None:
         wf = self._running_workflows.get(workflow_id)
         if wf and wf.status == WorkflowStatus.PAUSED:
             wf.status = WorkflowStatus.RUNNING
+            self._workflow_status[workflow_id] = WorkflowStatus.RUNNING
             # could resume from where left off – simplified not implemented
+
+    async def cancel(self, workflow_id: str) -> None:
+        """Cancel a running workflow."""
+        wf = self._running_workflows.get(workflow_id)
+        if wf:
+            wf.status = WorkflowStatus.CANCELLED
+            self._workflow_status[workflow_id] = WorkflowStatus.CANCELLED
+            self._running_workflows.pop(workflow_id, None)
 
 
 # Singleton accessor
