@@ -2,4 +2,12 @@
 .cache/
 .venv/
 models/
-tests/  
+nova_tasks.db
+*.db
+*.sqlite3
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
