@@ -1,60 +1,48 @@
-"""
-Nova Memory Engine Package.
-"""
-from .engine import MemoryEngine
+"""Nova Memory Engine public API."""
+from .engine import MemoryEngine, get_memory_engine
 from .models import (
     MemoryRecord,
-    MemorySearchParams,
-    MemoryFilterParams,
-    MemoryScope,
-    MemoryType,
     MemorySearchResult,
-    MemoryStats,
-    MemoryHealth,
+    MemorySearchParams,
 )
-from .types import MemoryScope as MemoryScopeEnum, MemoryType as MemoryTypeEnum
 from .storage import MemoryStore, InMemoryStore
-from .embeddings import EmbeddingProvider, DefaultEmbeddingProvider, LLMEmbeddingProvider, get_embedding_provider
-from .retrieval import RetrievalEngine
-from .filters import MemoryFilters, get_memory_filters
-from .classifier import MemoryClassifier, MemoryCategory, get_classifier
+from .embeddings import EmbeddingProvider, DefaultEmbeddingProvider
+from .types import MemoryScope, MemoryType
 from .exceptions import (
     MemoryEngineError,
-    MemoryNotFoundError,
+    MemoryConfigurationError,
     MemoryValidationError,
     MemoryStorageError,
+    MemoryRetrievalError,
+    MemoryEmbeddingError,
+    MemoryProcessorError,
+    MemoryTimeoutError,
     MemoryExpiredError,
+    MemoryNotFoundError,
     MemoryLimitExceededError,
 )
 
 __all__ = [
     "MemoryEngine",
+    "get_memory_engine",
     "MemoryRecord",
-    "MemorySearchParams",
-    "MemoryFilterParams",
-    "MemoryScope",
-    "MemoryType",
     "MemorySearchResult",
-    "MemoryStats",
-    "MemoryHealth",
-    "MemoryScopeEnum",
-    "MemoryTypeEnum",
+    "MemorySearchParams",
     "MemoryStore",
     "InMemoryStore",
     "EmbeddingProvider",
     "DefaultEmbeddingProvider",
-    "LLMEmbeddingProvider",
-    "get_embedding_provider",
-    "RetrievalEngine",
-    "MemoryFilters",
-    "get_memory_filters",
-    "MemoryClassifier",
-    "MemoryCategory",
-    "get_classifier",
+    "MemoryScope",
+    "MemoryType",
     "MemoryEngineError",
-    "MemoryNotFoundError",
+    "MemoryConfigurationError",
     "MemoryValidationError",
     "MemoryStorageError",
+    "MemoryRetrievalError",
+    "MemoryEmbeddingError",
+    "MemoryProcessorError",
+    "MemoryTimeoutError",
     "MemoryExpiredError",
+    "MemoryNotFoundError",
     "MemoryLimitExceededError",
 ]
