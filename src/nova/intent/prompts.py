@@ -15,6 +15,8 @@ Supported intents (choose exactly ONE):
    • application: exact name of the program (e.g. "Visual Studio Code")
 4. close_application   – action: close
    • application: exact name
+5. screen.read         – action: read
+   • no extra fields required
 
 Output **must** contain:
 {
@@ -53,5 +55,13 @@ FEW_SHOT = [
     {
         "role": "assistant",
         "content": '{"intent":"open_application","action":"open","application":"Visual Studio Code","confidence":0.97}'
+    },
+    {
+        "role": "user",
+        "content": "What's on my screen?"
+    },
+    {
+        "role": "assistant",
+        "content": '{"intent":"screen.read","action":"read","confidence":0.95}'
     },
 ]
