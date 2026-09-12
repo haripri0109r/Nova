@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -145,14 +145,16 @@ class Settings(BaseSettings):
     # --------------------------------------------------------------------
     # Validators
     # --------------------------------------------------------------------
-    @validator("nova_log_level")
+    @field_validator("nova_log_level")
+    @classmethod
     def _valid_log_level(cls, v: str) -> str:
         lvl = v.upper()
         if lvl not in logging._nameToLevel:
             raise ValueError(f"Invalid log level: {v}")
         return lvl
 
-    @validator("vosk_model_path")
+    @field_validator("vosk_model_path")
+    @classmethod
     def _vosk_model_exists(cls, v: Path) -> Path:
         if not v.is_dir():
             raise FileNotFoundError(
@@ -161,14 +163,14 @@ class Settings(BaseSettings):
             )
         return v
 
-    @root_validator(skip_on_failure=True)
-    def _warn_missing_elevenlabs(cls, values):
-        if values.get("nova_welcome_enabled") and not values.get("elevenlabs_voice_id"):
+    @model_validator(mode="after")
+    def _warn_missing_elevenlabs(self) -> "Settings":
+        if self.nova_welcome_enabled and not self.elevenlabs_voice_id:
             logging.getLogger(__name__).warning(
                 "NOVA_WELCOME_ENABLED=True but ELEVENLABS_VOICE_ID is not set. "
                 "TTS will be skipped until both ELEVENLABS_VOICE_ID and ELEVENLABS_API_KEY are provided."
             )
-        return values
+        return self
 
 
 # Single instance used throughout the project
