@@ -17,10 +17,8 @@ from .intent_classifier import (
     IntentClassifierConfig,
 )
 from .planner import (
-    BasePlanner,
-    PlaceholderPlanner,
-    create_planner,
-    PlannerConfig,
+    Planner,
+    get_planner,
 )
 from .router import (
     BaseRouter,
@@ -55,10 +53,8 @@ __all__ = [
     "PlaceholderIntentClassifier",
     "create_intent_classifier",
     "IntentClassifierConfig",
-    "BasePlanner",
-    "PlaceholderPlanner",
-    "create_planner",
-    "PlannerConfig",
+    "Planner",
+    "get_planner",
     "BaseRouter",
     "PlaceholderRouter",
     "create_router",
