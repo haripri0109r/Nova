@@ -14,6 +14,7 @@ class Action(str, Enum):
     OPEN = "open"
     CLOSE = "close"
     TOGGLE = "toggle"
+    READ = "read"
 
 
 class Amount(str, Enum):
@@ -52,11 +53,22 @@ class AppIntent(IntentBase):
     application: str                         # e.g. "Visual Studio Code"
 
 
+class ScreenReadIntent(IntentBase):
+    intent: Literal["screen.read"] = "screen.read"
+    action: Action = Action.READ
+
+
 # Discriminated union – the router works with this single type
-Intent = VolumeIntent | BrightnessIntent | AppIntent
+Intent = VolumeIntent | BrightnessIntent | AppIntent | ScreenReadIntent
 
 
 def parse_intent(raw: dict) -> Intent:
     """Validate *raw* dict coming from the LLM and return a concrete Intent."""
-    # Pydantic will raise ValidationError if the shape is wrong.
-    return Intent.parse_obj(raw)
+    # Try each concrete model until one validates.
+    for model in (ScreenReadIntent, VolumeIntent, BrightnessIntent, AppIntent):
+        try:
+            return model.parse_obj(raw)
+        except ValidationError:
+            continue
+    # If none matched, raise the last error
+    raise ValidationError(f"No intent model matched: {raw}")
