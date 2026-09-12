@@ -2,29 +2,13 @@
 Workflow definitions – core data structures for workflows.
 """
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, ConfigDict
 import uuid
 
-
-class WorkflowStatus(str, Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    PAUSED = "paused"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class NodeStatus(str, Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    SKIPPED = "skipped"
+from .models import WorkflowStatus
 
 
 @dataclass
@@ -41,7 +25,7 @@ class Workflow(BaseModel):
     name: str
     version: str = "1.0"
     description: str = ""
-    status: str = Field(default=WorkflowStatus.PENDING.value)
+    status: WorkflowStatus = Field(default=WorkflowStatus.PENDING)
     nodes: List["Node"] = Field(default_factory=list)
     edges: List[WorkflowEdge] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)

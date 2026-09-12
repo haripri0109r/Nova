@@ -22,9 +22,19 @@ class NodeExecutor:
         self,
         retry_policy: Optional[RetryPolicy] = None,
         rollback_handler: Optional[CompensationHandler] = None,
+        skill_manager: Optional["SkillManager"] = None,
     ) -> None:
         self.retry = retry_policy or RetryPolicy()
         self.rollback = rollback_handler or DefaultCompensation()
+        self.skill_manager = skill_manager
+
+    def _get_skill_manager(self):
+        """Get or create the skill manager."""
+        if self.skill_manager is not None:
+            return self.skill_manager
+        # Lazy import to avoid circular dependency
+        from nova.skills.manager import get_skill_manager
+        return get_skill_manager()
 
     async def execute(self, node: "Node", ctx: Dict[str, Any], executed_nodes: Optional[List["Node"]] = None) -> Any:
         """
@@ -38,6 +48,30 @@ class NodeExecutor:
         while True:
             try:
                 result = await node.execute(ctx)
+                
+                # Check if result is a tool specification (from ActionNode)
+                if isinstance(result, dict) and "tool" in result and "args" in result:
+                    tool_name = result["tool"]
+                    tool_args = result["args"]
+                    skill_mgr = self._get_skill_manager()
+                    
+                    logger.debug("Executing skill: %s with args: %s", tool_name, tool_args)
+                    
+                    # Build intent payload for SkillManager
+                    intent_payload = {"intent": tool_name}
+                    intent_payload.update(tool_args)
+                    
+                    # Execute through SkillManager (sync call)
+                    skill_result = skill_mgr.execute_intent(intent_payload)
+                    
+                    if skill_result.get("status") == "ok":
+                        result = skill_result.get("result")
+                    else:
+                        # Skill execution failed or not found
+                        error_msg = skill_result.get("message", "Skill execution failed")
+                        logger.error("Skill %s failed: %s", tool_name, error_msg)
+                        raise RuntimeError(f"Skill {tool_name} failed: {error_msg}")
+                
                 return result
             except Exception as exc:
                 attempt += 1
