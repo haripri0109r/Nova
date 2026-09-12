@@ -4,7 +4,7 @@ Base class for all Nova skills.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any, Dict, Union, Awaitable
 
 logger = logging.getLogger("nova.skills")
 
@@ -33,10 +33,11 @@ class BaseSkill(ABC):
         ...
 
     @abstractmethod
-    def execute(self, intent_data: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, intent_data: Dict[str, Any]) -> Union[Dict[str, Any], Awaitable[Dict[str, Any]]]:
         """
-        Perform the actual work. Must return a result dictionary that will be
-        sent back to the caller (e.g. {"status": "ok", "detail": "volume set to 30"}).
+        Perform the actual work. Must return a result dictionary (or an awaitable
+        resolving to one) that will be sent back to the caller
+        (e.g. {"status": "ok", "detail": "volume set to 30"}).
         Should raise exceptions only for unrecoverable errors.
         """
         ...
