@@ -63,6 +63,12 @@ class PlaceholderProvider(BaseLLMProvider):
                 response_text="Opening Google Chrome.",
                 actions=[{"tool": "open_application", "parameters": {"application": "chrome"}, "description": "open Chrome"}],
             )
+        if any(k in txt for k in ("screen", "what's on", "what is on", "read my screen", "what's on my screen")):
+            return StructuredResponse(
+                requires_execution=True,
+                response_text="Reading the screen for you.",
+                actions=[{"tool": "screen.read", "parameters": {}, "description": "read screen"}],
+            )
         return StructuredResponse(
             requires_execution=False,
             response_text="I'm ready. How can I help?",
