@@ -192,3 +192,55 @@ class ScheduledEvent(BaseEvent):
     """Generic wrapper for any scheduled job (cron / interval / one‑shot)."""
     category: str = "scheduler"
     payload: Dict[str, Any] = Field(default_factory=lambda: {"job_id": "", "trigger": ""})
+
+
+# ---------- Task lifecycle ----------
+class TaskCreatedEvent(BaseEvent):
+    category: str = "task"
+    payload: Dict[str, Any] = Field(default_factory=lambda: {"task_id": "", "plan_summary": ""})
+
+class StepStartedEvent(BaseEvent):
+    category: str = "task"
+    payload: Dict[str, Any] = Field(default_factory=lambda: {"task_id": "", "step_index": 0, "tool": ""})
+
+class StepCompletedEvent(BaseEvent):
+    category: str = "task"
+    payload: Dict[str, Any] = Field(default_factory=lambda: {"task_id": "", "step_index": 0, "tool": "", "success": True, "detail": ""})
+
+class StepInterruptedEvent(BaseEvent):
+    category: str = "task"
+    payload: Dict[str, Any] = Field(default_factory=lambda: {"task_id": "", "step_index": 0, "tool": "", "reason": ""})
+
+class TaskPausedEvent(BaseEvent):
+    category: str = "task"
+    payload: Dict[str, Any] = Field(default_factory=lambda: {"task_id": "", "step_index": 0, "reason": ""})
+
+class TaskCancelledEvent(BaseEvent):
+    category: str = "task"
+    payload: Dict[str, Any] = Field(default_factory=lambda: {"task_id": "", "step_index": 0, "reason": ""})
+
+class TaskResumedEvent(BaseEvent):
+    category: str = "task"
+    payload: Dict[str, Any] = Field(default_factory=lambda: {"task_id": "", "step_index": 0})
+
+class TaskCompletedEvent(BaseEvent):
+    category: str = "task"
+    payload: Dict[str, Any] = Field(default_factory=lambda: {"task_id": "", "summary": ""})
+
+class TaskFailedEvent(BaseEvent):
+    category: str = "task"
+    payload: Dict[str, Any] = Field(default_factory=lambda: {"task_id": "", "step_index": 0, "error": ""})
+
+class StepRetriedEvent(BaseEvent):
+    """Emitted when an INTERRUPTED step is marked PENDING and scheduled for retry."""
+    category: str = "task"
+    payload: Dict[str, Any] = Field(default_factory=lambda: {
+        "task_id": "", "step_index": 0, "tool": "", "retry_count": 0,
+    })
+
+class StepSkippedEvent(BaseEvent):
+    """Emitted when an INTERRUPTED step is marked SKIPPED by user command."""
+    category: str = "task"
+    payload: Dict[str, Any] = Field(default_factory=lambda: {
+        "task_id": "", "step_index": 0, "tool": "", "reason": "",
+    })
