@@ -1,14 +1,20 @@
 """Provider registry + life‑cycle – completely hidden from the rest of Nova."""
 from __future__ import annotations
+
+import asyncio
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 
 from .providers import BaseLLMProvider, PlaceholderProvider, create_provider, get_available_providers
-from .config import LLMEngineConfig
+from .config import LLMEngineConfig, LLMProviderConfig, LLMConfig
 from .models import ExecutionRequest, ExecutionResponse
 from .parser import get_parser
-from .exceptions import LLMEngineError
+from .exceptions import LLMEngineError, LLMProviderError, LLMGenerationError, LLMValidationError, LLMParsingError, LLMConfigurationError
+from .conversation import ConversationManager
+from .context import ContextBuilder
+from .prompt_builder import PromptBuilder
+from .models import LLMRequest, LLMResponse, StructuredResponse, ExecutionResponse, ExecutionResult
 
 _log = logging.getLogger("nova.llm.manager")
 
@@ -19,16 +25,110 @@ class LLMManagerConfig:
     providers: Dict[str, Any] = field(default_factory=dict)
 
 
+class _PlaceholderAdapter(BaseLLMProvider):
+    """Adapter to make PlaceholderProvider conform to canonical generate() contract."""
+    def __init__(self, inner: PlaceholderProvider) -> None:
+        super().__init__("placeholder")
+        self._inner = inner
+
+    # ----- Lifecycle delegation -----
+    async def initialize(self) -> bool:
+        return await self._inner.initialize()
+
+    async def cleanup(self) -> None:
+        await self._inner.cleanup()
+
+    async def close(self) -> None:
+        await self._inner.close()
+
+    async def health_check(self) -> bool:
+        return await self._inner.health_check()
+
+    # ----- BaseLLMProvider properties -----
+    @property
+    def name(self) -> str:
+        return self._inner.name
+
+    @property
+    def is_available(self) -> bool:
+        return getattr(self._inner, "is_ready", False)
+
+    @property
+    def is_ready(self) -> bool:
+        return getattr(self._inner, "is_ready", False)
+
+    # ----- BaseLLMProvider (providers.py) abstract method -----
+    async def translate(self, req) -> "StructuredResponse":
+        # Extract text from LLMRequest (last user message)
+        text = ""
+        if hasattr(req, "messages") and req.messages:
+            for msg in reversed(req.messages):
+                if msg.role == "user":
+                    text = msg.content
+                    break
+        # Create a simple object with .text attribute for inner.translate
+        class _Req:
+            def __init__(self, txt):
+                self.text = txt
+        return await self._inner.translate(_Req(text))
+
+    # ----- BaseLLMProvider (provider.py) abstract method -----
+    async def generate_intent(self, transcript: str) -> Dict[str, Any]:
+        # Delegate to translate via a minimal request
+        from .models import LLMRequest, LLMMessage
+        req = LLMRequest(messages=[LLMMessage(role="user", content=transcript)])
+        structured = await self.translate(req)
+        return {
+            "intent": structured.actions[0].tool if structured.actions else "unknown",
+            "action": structured.actions[0].parameters.get("action", "none") if structured.actions else "none",
+        }
+
+    # ----- Canonical generation method -----
+    async def generate(self, request: "LLMRequest") -> "LLMResponse":
+        # Delegate to translate and wrap result into LLMResponse with JSON content
+        structured = await self.translate(request)
+        import json
+        # Serialize the structured response as JSON string for parser
+        json_str = json.dumps({
+            "requires_execution": structured.requires_execution,
+            "response_text": structured.response_text,
+            "actions": [{"tool": a.tool, "parameters": a.parameters} for a in structured.actions]
+        })
+        from .models import LLMResponse
+        return LLMResponse(
+            content=json_str,
+            tool_calls=[{"tool": a.tool, "parameters": a.parameters} for a in structured.actions],
+            finish_reason="stop",
+            usage={},
+            model=None,
+            provider=self.name,
+            latency_ms=0,
+            metadata={},
+        )
+
+
 class LLMManager:
     """
-    Provider registry + life‑cycle – completely hidden from the rest of Nova.
+    Main orchestrator for the LLM pipeline.
     """
 
-    def __init__(self, config: Optional[LLMManagerConfig] = None):
+    def __init__(
+        self,
+        config: Optional[LLMManagerConfig] = None,
+        store: Optional[Any] = None,
+        embedding_provider: Optional[Any] = None,
+        llm_config: Optional[LLMConfig] = None,
+    ) -> None:
         self.config = config or LLMManagerConfig()
+        self._config = llm_config or LLMConfig()
         self._providers: Dict[str, BaseLLMProvider] = {}
         self._current_provider: Optional[str] = None
         self._initialized = False
+
+        # Components
+        self._conversation_manager: Optional[ConversationManager] = None
+        self._context_builder: Optional["ContextBuilder"] = None
+        self._prompt_builder: Optional[PromptBuilder] = None
         self._parser = None
 
     async def initialize(self, config: Optional[dict] = None) -> bool:
@@ -43,6 +143,21 @@ class LLMManager:
             from .parser import get_parser
             self._parser = get_parser()
 
+            # Initialize conversation manager
+            self._conversation_manager = ConversationManager()
+            await self._conversation_manager.initialize()
+
+            # Initialize context builder
+            from .context import ContextBuilder
+            self._context_builder = ContextBuilder(
+                conversation_manager=self._conversation_manager,
+                config=self._config,
+            )
+            await self._context_builder.initialize()
+
+            # Initialize prompt builder
+            self._prompt_builder = PromptBuilder()
+
             # Initialize providers based on config
             if self.config.providers:
                 for name, provider_config in self.config.providers.items():
@@ -55,34 +170,34 @@ class LLMManager:
             _log.info("LLM Manager initialized successfully")
             return True
 
-        except Exception as e:
-            _log.error(f"LLM Manager initialization failed: {e}")
-            raise
+        except Exception as exc:
+            _log.error(f"LLM Manager initialization failed: {exc}")
+            raise LLMEngineError(f"Initialization failed: {exc}") from exc
 
-    async def _add_provider(self, name: str, config: dict):
+    async def _add_provider(self, name: str, config: dict) -> None:
         """Add a provider instance."""
         provider_type = config.get("provider", "placeholder")
-        provider_class = self._get_provider_class(provider_type)
-        if provider_class:
-            provider = provider_class(config)
-            await provider.initialize()
-            self._providers[name] = provider
-            _log.info(f"Registered LLM provider: {name} ({provider_type})")
-
-    def _get_provider_class(self, provider_type: str):
-        """Get provider class from type."""
-        from .providers import (
-            PlaceholderProvider,
-            _get_provider_class
+        # Build LLMProviderConfig from dict
+        provider_cfg = LLMProviderConfig(
+            provider=config.get("provider", "placeholder"),
+            model=config.get("model"),
+            api_key=config.get("api_key"),
+            base_url=config.get("base_url"),
+            temperature=config.get("temperature", 0.7),
+            max_tokens=config.get("max_tokens", 2048),
+            top_p=config.get("top_p", 1.0),
+            extra=config.get("extra", {}),
         )
-        from .types import LLMProvider
-
-        try:
-            provider_enum = LLMProvider(provider_type)
-            return _get_provider_class(provider_enum)
-        except ValueError:
-            _log.warning(f"Unknown provider type: {provider_type}")
-            return None
+        provider = create_provider(provider_cfg)
+        if provider:
+            await provider.initialize()
+            # Wrap PlaceholderProvider with adapter to provide generate()
+            if isinstance(provider, PlaceholderProvider):
+                provider = _PlaceholderAdapter(provider)
+            if provider:
+                await provider.initialize()
+                self._providers[name] = provider
+                _log.info(f"Registered LLM provider: {name} ({provider_type})")
 
     async def cleanup(self) -> None:
         """Cleanup all providers."""
@@ -94,71 +209,84 @@ class LLMManager:
         self._providers.clear()
         self._initialized = False
 
-    async def process(self, text: str, session_id: str = "default", 
+    async def process(self, text: str, session_id: str = "default",
                       task_type: str = "conversation",
                       context: Optional[dict] = None) -> ExecutionResponse:
         """
-        Process text through the LLM pipeline.
-        
-        Flow:
-        1. Build context (history, tools, system prompt)
-        2. Build prompt
-        3. Select provider
-        4. Get LLM response
-        5. Parse and validate response
-        6. Store in conversation history
-        7. Return structured response
+        Main entry point: process user text through the full LLM pipeline.
         """
         if not self._initialized:
             await self.initialize()
 
-        # Get or create conversation
-        conv_manager = get_conversation_manager()
-        session = conv_manager.get_session(session_id)
+        if not text or not text.strip():
+            return ExecutionResponse(
+                requires_execution=False,
+                response_text="",
+                actions=[],
+                provider="none",
+                latency_ms=0,
+            )
 
-        # Add user message to history
-        conv_manager.add_message(session_id, "user", text)
+        # 1️⃣ Conversation history
+        if self._config.enable_conversation_history:
+            await self._conversation_manager.add_message(session_id, "user", text)
 
-        # Build context
-        context_builder = get_context_builder()
-        context = context_builder.build_context(
+        # Extract extra_context from caller-provided context
+        extra_context = ""
+        if context and isinstance(context, dict):
+            extra_context = context.get("extra_context", "") or ""
+
+        # 2️⃣ Build context via ContextBuilder
+        context_data = await self._context_builder.build_context(
             session_id=session_id,
-            user_text=text,
             system_prompt=self._get_system_prompt(),
-            available_tools=self._get_tool_definitions()
+            extra_context=extra_context,
+            tools=self._get_tool_definitions(),
         )
 
-        # Build LLM request
-        from .models import LLMRequest, LLMMessage
-        messages = [LLMMessage(role="user", content=text)]
-        
-        # Add conversation history
-        history = conv_manager.get_history(session_id, limit=10)
-        for msg in history:
-            messages.insert(0, LLMMessage(role=msg["role"], content=msg["content"]))
+        # 3️⃣ Build prompt via PromptBuilder
+        messages = self._prompt_builder.build(context_data, user_input=text)
 
+        # 4️⃣ Build LLMRequest
         request = LLMRequest(
-            messages=messages,
-            task_type="conversation"
+            messages=[{"role": m.role, "content": m.content} for m in messages],
+            task_type="conversation",
+            temperature=self._config.default_temperature,
+            max_tokens=self._config.default_max_tokens,
+            top_p=self._config.default_top_p,
         )
 
-        # Select provider
+        # 5️⃣ Select provider
         provider = self._select_provider()
+        if not provider:
+            raise LLMProviderError("No available LLM provider", provider="none")
 
-        # Get response from provider
-        response = await provider.complete(request)
+        # 6️⃣ Generate response
+        try:
+            llm_response = await provider.generate(request)
+        except Exception as exc:
+            _log.error("Provider generation failed", exc_info=exc)
+            raise LLMGenerationError("Provider generation failed") from exc
 
-        # Parse response
-        structured = self._parser.parse(response.content)
+        # 7️⃣ Parse response
+        try:
+            structured = self._parser.parse(llm_response.content)
+        except Exception as exc:
+            _log.error("Failed to parse provider response", exc_info=exc)
+            raise LLMParsingError("Failed to parse provider response") from exc
 
-        # Store assistant response
-        conv_manager.add_message(session_id, "assistant", structured.response_text)
+        # 8️⃣ Store assistant response
+        if self._config.enable_conversation_history:
+            await self._conversation_manager.add_message(
+                session_id, "assistant", structured.response_text
+            )
 
         return ExecutionResponse(
             requires_execution=structured.requires_execution,
             response_text=structured.response_text,
             actions=structured.actions,
-            provider=provider.name,
+            provider=self._current_provider or "unknown",
+            latency_ms=0,
         )
 
     def _get_system_prompt(self) -> str:
@@ -171,38 +299,52 @@ class LLMManager:
         from .prompt_builder import TOOL_DEFINITIONS
         return TOOL_DEFINITIONS
 
-    def _select_provider(self):
+    def _select_provider(self) -> Optional[BaseLLMProvider]:
         """Select best available provider."""
         if not self._providers:
-            # Fallback to placeholder
-            from .providers import PlaceholderProvider
-            return PlaceholderProvider()
+            # Create a default placeholder adapter with minimal config
+            from .config import LLMProviderConfig
+            fallback_cfg = LLMProviderConfig(provider="placeholder")
+            return _PlaceholderAdapter(PlaceholderProvider(fallback_cfg))
 
-        # Return first available provider
         for name, provider in self._providers.items():
-            if provider.is_initialized:
+            if getattr(provider, "is_ready", False):
                 self._current_provider = name
                 return provider
 
         # Fallback
-        from .providers import PlaceholderProvider
-        return PlaceholderProvider()
+        from .config import LLMProviderConfig
+        fallback_cfg = LLMProviderConfig(provider="placeholder")
+        return _PlaceholderAdapter(PlaceholderProvider(fallback_cfg))
+
+    async def generate_intent(self, transcript: str) -> Dict[str, Any]:
+        """
+        Generate an intent dict from a user transcript using the best available provider.
+        Expected return keys: intent, action, (optional) target, level, confidence.
+        """
+        provider = self._select_provider()
+        if provider is None:
+            # Fallback minimal intent
+            return {"intent": "fallback", "action": "none", "confidence": 0.0}
+        try:
+            return await provider.generate_intent(transcript)
+        except Exception as exc:
+            _log.error(f"generate_intent failed: {exc}")
+            return {"intent": "fallback", "action": "none", "confidence": 0.0}
 
     def get_available_providers(self) -> List[str]:
-        """Get list of available providers."""
         return list(self._providers.keys())
 
     def get_current_provider(self) -> Optional[str]:
         return self._current_provider
 
     async def health_check(self) -> dict:
-        """Check health of all providers."""
         health = {}
         for name, provider in self._providers.items():
             try:
                 health[name] = {
-                    "initialized": provider.is_initialized,
-                    "name": provider.name
+                    "initialized": getattr(provider, "is_ready", False),
+                    "name": provider.name,
                 }
             except Exception as e:
                 health[name] = {"error": str(e)}
@@ -210,12 +352,15 @@ class LLMManager:
 
 
 # Global instance
-_manager = None
+_manager: Optional[LLMManager] = None
 
 
-def get_llm_manager(config: LLMManagerConfig = None) -> LLMManager:
+def get_llm_manager(config: Optional[LLMManagerConfig] = None) -> LLMManager:
     """Get or create global LLM Manager instance."""
     global _manager
     if _manager is None:
         _manager = LLMManager(config)
     return _manager
+
+
+__all__ = ["LLMManager", "get_llm_manager", "LLMManagerConfig"]
