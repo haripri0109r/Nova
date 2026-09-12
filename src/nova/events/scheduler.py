@@ -45,7 +45,7 @@ class Scheduler:
         self._running = False
 
     async def start(self) -> None:
-        if self._running:
+        if self._running or self._scheduler.running:
             return
         self._loop = asyncio.get_running_loop()
         self._scheduler.start()

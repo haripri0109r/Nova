@@ -1,7 +1,7 @@
 """
 Nova Event Bus – public API
 """
-from .event_bus import EventBus, get_event_bus
+from .event_bus import EventBus, get_event_bus, get_event_bus_sync
 from .events import (
     BaseEvent,
     Priority,
@@ -38,6 +38,18 @@ from .events import (
     PluginUnloadedEvent,
     ScheduledEvent,
     IntentResolvedEvent,
+    # Task lifecycle events
+    TaskCreatedEvent,
+    TaskPausedEvent,
+    TaskCancelledEvent,
+    TaskResumedEvent,
+    TaskCompletedEvent,
+    TaskFailedEvent,
+    StepStartedEvent,
+    StepCompletedEvent,
+    StepInterruptedEvent,
+    StepRetriedEvent,
+    StepSkippedEvent,
 )
 from .dispatcher import Dispatcher, DispatchMetrics
 from .listeners import on, ListenerRegistry
@@ -46,6 +58,7 @@ from .scheduler import Scheduler, ScheduledJob
 __all__ = [
     "EventBus",
     "get_event_bus",
+    "get_event_bus_sync",
     "BaseEvent",
     "Priority",
     "BatteryLowEvent",
@@ -81,6 +94,18 @@ __all__ = [
     "PluginUnloadedEvent",
     "ScheduledEvent",
     "IntentResolvedEvent",
+    # Task lifecycle
+    "TaskCreatedEvent",
+    "TaskPausedEvent",
+    "TaskCancelledEvent",
+    "TaskResumedEvent",
+    "TaskCompletedEvent",
+    "TaskFailedEvent",
+    "StepStartedEvent",
+    "StepCompletedEvent",
+    "StepInterruptedEvent",
+    "StepRetriedEvent",
+    "StepSkippedEvent",
     "Dispatcher",
     "DispatchMetrics",
     "on",
