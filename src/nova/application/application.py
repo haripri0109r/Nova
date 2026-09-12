@@ -7,6 +7,7 @@ Nova pipeline: Wake Phrase → STT → Intent → Execution → TTS → Events.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import sys
 import threading
@@ -217,8 +218,24 @@ class NovaApplication:
             UserCommandReceivedEvent(source="application", payload={"text": command_text})
         )
         
-        # Process through Brain
-        result = self._brain.process(command_text)
+        # Process through Brain asynchronously
+        if hasattr(self._brain, "process_text"):
+            resp = self._brain.process_text(command_text)
+            if inspect.isawaitable(resp):
+                resp = await resp
+            if isinstance(resp, dict):
+                result = resp
+            else:
+                status = "completed" if (hasattr(resp, "metadata") and resp.metadata.get("success", False)) else "error"
+                message = getattr(resp, "response_text", str(resp))
+                result = {
+                    "status": status,
+                    "message": message,
+                    "summary": message,
+                    "response": message,
+                }
+        else:
+            result = self._brain.process(command_text)
         
         return result
 
