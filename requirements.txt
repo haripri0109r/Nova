@@ -20,3 +20,11 @@ faster-whisper>=1.0.0
 google-generativeai>=0.3.0
 torchaudio
 apscheduler
+
+# Screen understanding dependencies
+uiautomation>=2.0
+mss>=9.0
+pillow>=10.0
+pytesseract>=0.3  # For Tesseract OCR (install tesseract-ocr separately)
+# easyocr>=1.7  # Optional - for more languages/accuracy (heavier dependency)
+# pytesseract>=0.3  # For Tesseract OCR (install tesseract-ocr separately)
