@@ -84,6 +84,21 @@ class LocalIntentEngine:
         """Send prompt to LLM via LLMManager and return *parsed* JSON dict."""
         # LLMManager returns a dict with intent, action, target, level
         result = self._llm_manager.generate_intent(text)
+        # If generate_intent is async, run it
+        import asyncio, inspect
+        if inspect.iscoroutine(result):
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop and loop.is_running():
+                # Can't run_until_complete on a running loop; run in new thread
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(asyncio.run, result)
+                    result = future.result()
+            else:
+                result = asyncio.run(result)
         if result is None:
             raise RuntimeError("All LLM providers failed")
         return result
