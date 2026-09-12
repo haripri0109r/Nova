@@ -1,126 +1,27 @@
-"""Strict Pydantic models – **only** the data structures Nova needs."""
+"""LLM Engine – pure data models (single source of truth)."""
 from __future__ import annotations
+
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
+
 from .types import LLMProvider, LLMTaskType
-from .config import LLMConfig
 
 
-class ToolAction(BaseModel):
-    """One concrete tool the Agent Orchestrator can execute."""
-    tool: str
-    parameters: Dict[str, Any] = Field(default_factory=dict)
-    description: str = ""
-
-
-class LLMAction(ToolAction):
-    """Alias for compatibility."""
-    pass
-
-
-class StructuredResponse(BaseModel):
-    """The **exact** JSON the LLM must return – no extra keys."""
-    requires_execution: bool
-    response_text: str
-    actions: List[ToolAction] = Field(default_factory=list)
-
-
-class LLMResponseStructured(StructuredResponse):
-    """Alias for compatibility."""
-    pass
-
-
-class LLMActionResult(BaseModel):
-    """Result of executing a tool action."""
-    tool: str
-    success: bool
-    result: Any = None
-    error: Optional[str] = None
-
-
+# -------------------------------------------------------------------------
+# Core message / request / response models
+# -------------------------------------------------------------------------
 class LLMMessage(BaseModel):
     """A single message in a conversation."""
-    role: str          # "system" | "user" | "assistant" | "tool"
+    role: str                     # "system" | "user" | "assistant" | "tool"
     content: str
     name: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
-
-
-class ConversationContext(BaseModel):
-    """A conversation session with history."""
-    session_id: str
-    messages: List[LLMMessage] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-    def add_message(self, message: LLMMessage) -> None:
-        self.messages.append(message)
-        self.updated_at = datetime.utcnow()
-
-    def get_recent(self, limit: int = 10) -> List[LLMMessage]:
-        return self.messages[-limit:]
-
-
-class ConversationTurn(BaseModel):
-    """One turn in a dialogue – kept only for optional history."""
-    role: str          # "user" | "assistant"
-    content: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-
-
-class ConversationMemory(BaseModel):
-    """Simple container for a full conversation history."""
-    turns: List[ConversationTurn] = Field(default_factory=list)
-
-    def add_turn(self, role: str, content: str) -> None:
-        self.turns.append(ConversationTurn(role=role, content=content))
-
-
-class LLMMessage(BaseModel):
-    """A single message in a conversation."""
-    role: str          # "system" | "user" | "assistant" | "tool"
-    content: str
-    name: Optional[str] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = None
-    tool_call_id: Optional[str] = None
-
-
-class ConversationContext(BaseModel):
-    """A conversation session with history."""
-    session_id: str
-    messages: List[LLMMessage] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-    def add_message(self, message: LLMMessage) -> None:
-        self.messages.append(message)
-        self.updated_at = datetime.utcnow()
-
-    def get_recent(self, limit: int = 10) -> List[LLMMessage]:
-        return self.messages[-limit:]
-
-
-class ConversationTurn(BaseModel):
-    """One turn in a dialogue – kept only for optional history."""
-    role: str          # "user" | "assistant"
-    content: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-
-
-class ConversationMemory(BaseModel):
-    """Simple container for a full conversation history."""
-    turns: List[ConversationTurn] = Field(default_factory=list)
-
-    def add_turn(self, role: str, content: str) -> None:
-        self.turns.append(ConversationTurn(role=role, content=content))
 
 
 class LLMRequest(BaseModel):
-    """Request to an LLM provider."""
+    """Request sent to an LLM provider."""
     messages: List[LLMMessage]
     task_type: LLMTaskType = LLMTaskType.CONVERSATION
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
@@ -136,7 +37,7 @@ class LLMRequest(BaseModel):
 
 
 class LLMResponse(BaseModel):
-    """Raw response from LLM provider."""
+    """Raw response returned by an LLM provider."""
     content: str = ""
     tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
     finish_reason: Optional[str] = None
@@ -147,43 +48,42 @@ class LLMResponse(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-class LLMResponseStructured(BaseModel):
-    """The **exact** JSON the LLM must return – no extra keys."""
-    requires_execution: bool
-    response_text: str
-    actions: List[ToolAction] = Field(default_factory=list)
-
-
-class LLMActionResult(BaseModel):
-    """Result of executing a tool action."""
-    tool: str
-    success: bool
-    result: Any = None
-    error: Optional[str] = None
-
-
 class ToolAction(BaseModel):
-    """One concrete tool the Agent Orchestrator can execute."""
+    """A concrete tool/action the LLM may request."""
     tool: str
     parameters: Dict[str, Any] = Field(default_factory=dict)
     description: str = ""
 
 
-class LLMAction(ToolAction):
-    """Alias for compatibility."""
-    pass
-
-
 class StructuredResponse(BaseModel):
-    """The **exact** JSON the LLM must return – no extra keys."""
+    """Strict JSON structure the LLM must return."""
     requires_execution: bool
     response_text: str
     actions: List[ToolAction] = Field(default_factory=list)
 
 
-class LLMResponseStructured(StructuredResponse):
-    """Alias for compatibility."""
-    pass
+# Compatibility aliases
+LLMResponseStructured = StructuredResponse
+LLMAction = ToolAction
+
+
+class ToolAction(BaseModel):
+    """A concrete tool/action the LLM may request."""
+    tool: str
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    description: str = ""
+
+
+class StructuredResponse(BaseModel):
+    """Strict JSON structure the LLM must return."""
+    requires_execution: bool
+    response_text: str
+    actions: List[ToolAction] = Field(default_factory=list)
+
+
+# Compatibility aliases
+LLMResponseStructured = StructuredResponse
+LLMAction = ToolAction
 
 
 class LLMActionResult(BaseModel):
@@ -195,33 +95,53 @@ class LLMActionResult(BaseModel):
 
 
 class ExecutionRequest(BaseModel):
-    """What the Brain Engine sends us."""
+    """Request coming from the Brain → LLM Engine."""
     text: str
     session_id: str = "default"
     context: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ExecutionResponse(BaseModel):
-    """What we give back to the Brain Engine → Agent Orchestrator."""
+    """Structured response returned to the Brain / Agent layer."""
     requires_execution: bool
     response_text: str
     actions: List[ToolAction] = Field(default_factory=list)
-    provider: Optional[LLMProvider] = None
+    provider: Optional[str] = None
     latency_ms: int = 0
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ExecutionResult(BaseModel):
-    """Result of executing a plan."""
+    """Result of executing a plan returned to the caller."""
     success: bool
     results: List[LLMActionResult] = Field(default_factory=list)
     error: Optional[str] = None
     total_time_ms: int = 0
 
 
+class LLMActionResult(BaseModel):
+    """Result of executing a tool action (alias for ExecutionResult item)."""
+    tool: str
+    success: bool
+    result: Any = None
+    error: Optional[str] = None
+
+
+# -------------------------------------------------------------------------
+# Conversation / context models
+# -------------------------------------------------------------------------
+class ConversationContext(BaseModel):
+    """Context object passed around during a conversation."""
+    session_id: str
+    messages: List[LLMMessage] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ConversationTurn(BaseModel):
     """One turn in a dialogue – kept only for optional history."""
-    role: str          # "user" | "assistant"
+    role: str
     content: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
@@ -232,3 +152,24 @@ class ConversationMemory(BaseModel):
 
     def add_turn(self, role: str, content: str) -> None:
         self.turns.append(ConversationTurn(role=role, content=content))
+
+
+# -------------------------------------------------------------------------
+# Exported symbols
+# -------------------------------------------------------------------------
+__all__ = [
+    "LLMMessage",
+    "LLMRequest",
+    "LLMResponse",
+    "ToolAction",
+    "StructuredResponse",
+    "LLMResponseStructured",
+    "LLMAction",
+    "LLMActionResult",
+    "ExecutionRequest",
+    "ExecutionResponse",
+    "ExecutionResult",
+    "ConversationContext",
+    "ConversationTurn",
+    "ConversationMemory",
+]
