@@ -10,11 +10,16 @@ class IntentCategory(str, Enum):
     """High‑level intent categories."""
     OPEN_APPLICATION = "open_application"
     CLOSE_APPLICATION = "close_application"
+    OPEN_BROWSER = "open_browser"
+    SET_VOLUME = "set_volume"
     WEB_SEARCH = "web_search"
     SYSTEM_CONTROL = "system_control"
     MEDIA_CONTROL = "media_control"
     FILE_OPERATION = "file_operation"
     GENERAL_CONVERSATION = "general_conversation"
+    SCREEN_READ = "screen_read"
+    TASK_CONTROL = "task_control"
+    TASK_QUERY = "task_query"
     UNKNOWN = "unknown"
 
 

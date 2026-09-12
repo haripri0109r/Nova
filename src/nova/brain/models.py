@@ -28,6 +28,7 @@ class IntentResult(BaseModel):
 
 class PlanStep(BaseModel):
     """Single step in an execution plan."""
+    id: str = Field(default_factory=lambda: __import__('uuid').uuid4().hex)
     tool: str
     parameters: Dict[str, Any] = Field(default_factory=dict)
     depends_on: List[int] = Field(default_factory=list)  # indices of previous steps
