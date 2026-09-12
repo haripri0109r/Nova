@@ -37,6 +37,16 @@ class MemoryRecord(BaseModel):
     def touch(self):
         self.updated_at = datetime.utcnow()
 
+    # Make subscriptable for test compatibility
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
+    def __contains__(self, key: str) -> bool:
+        return hasattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
 
 class MemorySearchResult:
     def __init__(self, memory: 'MemoryRecord', score: float, matched_fields: list[str] = None):
@@ -50,6 +60,47 @@ class MemorySearchResult:
             "score": self.score,
             "matched_fields": self.matched_fields,
         }
+
+    # Make subscriptable for test compatibility
+    def __getitem__(self, key: str) -> Any:
+        if key == "memory":
+            return self.memory
+        elif key == "score":
+            return self.score
+        elif key == "matched_fields":
+            return self.matched_fields
+        elif key == "content":
+            return self.memory.content
+        elif key == "scope":
+            return self.memory.scope
+        elif key == "type":
+            return self.memory.type
+        elif key == "id":
+            return self.memory.id
+        elif key == "metadata":
+            return self.memory.metadata
+        elif key == "tags":
+            return self.memory.tags
+        elif key == "session_id":
+            return self.memory.session_id
+        elif key == "importance":
+            return self.memory.importance
+        elif key == "embedding":
+            return self.memory.embedding
+        raise KeyError(key)
+
+    def __contains__(self, key: str) -> bool:
+        try:
+            self[key]
+            return True
+        except KeyError:
+            return False
+
+    def get(self, key: str, default: Any = None) -> Any:
+        try:
+            return self[key]
+        except KeyError:
+            return default
 
 
 class MemorySearchParams:
@@ -121,6 +172,16 @@ class MemoryStats:
             "total_size_bytes": self.total_size_bytes,
         }
 
+    # Make subscriptable for test compatibility
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
+    def __contains__(self, key: str) -> bool:
+        return hasattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
 
 class MemoryHealth:
     def __init__(
@@ -145,3 +206,17 @@ class MemoryHealth:
             "expired_count": self.expired_count,
             "last_cleanup": self.last_cleanup,
         }
+
+    # Make subscriptable for test compatibility
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
+    def __contains__(self, key: str) -> bool:
+        return hasattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+    def __iter__(self):
+        """Allow iteration over keys for 'in' operator."""
+        return iter(self.to_dict().keys())
