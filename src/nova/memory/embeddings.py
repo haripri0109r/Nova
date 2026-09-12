@@ -1,81 +1,141 @@
-"""
-Embedding providers for generating vector embeddings.
-"""
+"""Memory Engine embedding providers."""
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import List, Optional
 import hashlib
-import logging
+from abc import ABC, abstractmethod
+from typing import Any, List, Optional
 
-logger = logging.getLogger(__name__)
+from .config import MemoryConfig
+from .exceptions import MemoryEmbeddingError
 
 
 class EmbeddingProvider(ABC):
-    """Abstract base class for embedding providers."""
+    """Abstract interface for embedding providers."""
 
     @abstractmethod
-    async def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings for a list of texts."""
-        pass
+    async def initialize(self) -> None:
+        """Initialize the provider (e.g., load models)."""
 
-    async def generate_embedding(self, text: str) -> List[float]:
+    @abstractmethod
+    async def close(self) -> None:
+        """Release resources."""
+
+    @abstractmethod
+    async def embed(self, text: str) -> List[float]:
         """Generate embedding for a single text."""
-        embeddings = await self.generate_embeddings([text])
-        return embeddings[0] if embeddings else []
+
+    @abstractmethod
+    async def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for a batch of texts."""
+
+    # Test compatibility methods
+    async def generate_embedding(self, text: str) -> List[float]:
+        """Generate embedding for a single text (alias for embed)."""
+        return await self.embed(text)
+
+    async def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for a batch of texts (alias for embed_batch)."""
+        return await self.embed_batch(texts)
 
 
 class DefaultEmbeddingProvider(EmbeddingProvider):
-    """Default embedding provider using simple hash-based embeddings."""
+    """Deterministic hash‑based embedding provider (no external dependencies)."""
 
-    def __init__(self, dimensions: int = 384):
+    def __init__(self, dimensions: int = 384) -> None:
         self._dimensions = dimensions
 
-    async def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """Generate simple hash-based embeddings."""
-        import hashlib
-        embeddings = []
+    async def initialize(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+    async def embed(self, text: str) -> List[float]:
+        return (await self.embed_batch([text]))[0]
+
+    async def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        embeddings: List[List[float]] = []
         for text in texts:
-            # Create a deterministic hash-based embedding
             hash_bytes = hashlib.md5(text.encode()).digest()
-            # Convert to float vector
             vector = [b / 255.0 for b in hash_bytes]
-            # Pad or truncate to desired dimensions
-            if len(vector) < 384:
-                vector.extend([0.0] * (384 - len(vector)))
+            if len(vector) < self._dimensions:
+                vector.extend([0.0] * (self._dimensions - len(vector)))
             else:
-                vector = vector[:384]
+                vector = vector[: self._dimensions]
             embeddings.append(vector)
         return embeddings
 
 
-class LLMEmbeddingProvider(EmbeddingProvider):
-    """LLM-based embedding provider using LLMManager."""
+class SentenceTransformerEmbeddingProvider(EmbeddingProvider):
+    """Sentence‑Transformer based embeddings (lazy‑loaded)."""
 
-    def __init__(self, llm_manager=None):
-        self._llm_manager = llm_manager
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
+        self._model_name = model_name
+        self._model = None
 
-    async def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings using LLM manager."""
-        if not self._llm_manager:
-            logger.warning("No LLM manager available, falling back to default provider")
-            return await DefaultEmbeddingProvider().generate_embeddings(texts)
-
+    async def initialize(self) -> None:
         try:
-            # Check if LLM manager has generate_embeddings method
-            if hasattr(self._llm_manager, 'generate_embeddings'):
-                return await self._llm_manager.generate_embeddings(texts)
-            else:
-                logger.warning("LLM manager does not have generate_embeddings method")
-                return await DefaultEmbeddingProvider().generate_embeddings(texts)
-        except Exception as e:
-            logger.warning(f"LLM embedding failed: {e}, falling back to default")
-            return await DefaultEmbeddingProvider().generate_embeddings(texts)
+            from sentence_transformers import SentenceTransformer  # type: ignore
+        except Exception as exc:  # pragma: no cover
+            raise MemoryEmbeddingError(
+                "sentence-transformers package not installed"
+            ) from exc
+        self._model = SentenceTransformer(self._model_name)
+
+    async def close(self) -> None:
+        self._model = None
+
+    async def embed(self, text: str) -> List[float]:
+        return (await self.embed_batch([text]))[0]
+
+    async def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        if self._model is None:
+            await self.initialize()
+        embeddings = self._model.encode(texts, convert_to_numpy=True)
+        return [emb.tolist() for emb in embeddings]
 
 
-def get_embedding_provider(provider_type: str = "default", **kwargs) -> EmbeddingProvider:
-    """Factory function to get embedding provider."""
-    if provider_type == "llm":
-        # Will be initialized later with LLM manager
-        return LLMEmbeddingProvider()
-    return DefaultEmbeddingProvider()
+class OpenAIEmbeddingProvider(EmbeddingProvider):
+    """Placeholder for OpenAI embeddings (not implemented)."""
+
+    async def initialize(self) -> None:
+        raise NotImplementedError("OpenAIEmbeddingProvider not implemented")
+
+    async def close(self) -> None:
+        pass
+
+    async def embed(self, text: str) -> List[float]:
+        raise NotImplementedError("OpenAIEmbeddingProvider not implemented")
+
+    async def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        raise NotImplementedError("OpenAIEmbeddingProvider not implemented")
+
+
+# Backward‑compatibility stubs (used by legacy __init__.py)
+class LLMEmbeddingProvider(EmbeddingProvider):
+    """Legacy LLM‑based provider – not implemented."""
+
+    async def initialize(self) -> None:
+        raise NotImplementedError("LLMEmbeddingProvider not implemented")
+
+    async def close(self) -> None:
+        pass
+
+    async def embed(self, text: str) -> List[float]:
+        raise NotImplementedError("LLMEmbeddingProvider not implemented")
+
+    async def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        raise NotImplementedError("LLMEmbeddingProvider not implemented")
+
+
+def get_embedding_provider(*args: Any, **kwargs: Any) -> EmbeddingProvider:
+    """Legacy factory – not implemented."""
+    raise NotImplementedError("get_embedding_provider not implemented")
+
+
+__all__ = [
+    "EmbeddingProvider",
+    "DefaultEmbeddingProvider",
+    "SentenceTransformerEmbeddingProvider",
+    "OpenAIEmbeddingProvider",
+]
