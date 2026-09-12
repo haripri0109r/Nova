@@ -22,9 +22,16 @@ logger = logging.getLogger("nova.events.bus")
 
 class EventBus:
     """
-    Event bus – no singleton, each call to get_event_bus() returns a new instance.
+    Central EventBus – singleton per process.
     """
-    _instances: List["EventBus"] = []
+    _instance: Optional["EventBus"] = None
+    # _lock removed - using threading lock in get_event_bus()
+
+    def __new__(cls) -> "EventBus":
+        if cls._instance is None:
+            instance = super().__new__(cls)
+            cls._instance = instance
+        return cls._instance
 
     def __init__(self) -> None:
         if getattr(self, "_initialised", False):
@@ -40,9 +47,26 @@ class EventBus:
         logger.info("EventBus initialised")
 
     async def start(self) -> None:
+        current_loop = asyncio.get_running_loop()
+        if self._running and self._loop is current_loop:
+            return
+        # If loop changed, reset state
+        if self._loop is not None and self._loop is not current_loop:
+            # Loop changed - need to reinitialize on new loop
+            self._loop = current_loop
+            self._running = False
+            self._listeners.clear()
+            self._wildcards.clear()
+            # Recreate dispatcher and scheduler for new loop
+            from .dispatcher import Dispatcher
+            from .scheduler import Scheduler
+            self._dispatcher = Dispatcher()
+            self._scheduler = Scheduler()
+            self._lock = asyncio.Lock()
+        
         if self._running:
             return
-        self._loop = asyncio.get_running_loop()
+        self._loop = current_loop
         # Reinitialize asyncio primitives on the current loop
         self._lock = asyncio.Lock()
         # Register globally decorated listeners
@@ -50,6 +74,9 @@ class EventBus:
         for entry_data in listener_registry.get_entries():
             entry = _ListenerEntry(**entry_data)
             target = self._wildcards if entry.event_type == "*" else self._listeners[entry.event_type]
+            # Avoid duplicate registration of same callback
+            if any(e.callback is entry.callback for e in target):
+                continue
             idx = 0
             for i, e in enumerate(target):
                 if e.priority < entry.priority:
@@ -58,8 +85,6 @@ class EventBus:
             else:
                 idx = len(target)
             target.insert(idx, entry)
-        # Register this instance
-        EventBus._instances.append(self)
         await self._dispatcher.start()
         await self._scheduler.start()
         self._running = True
@@ -78,30 +103,54 @@ class EventBus:
         else:
             future = asyncio.run_coroutine_threadsafe(self._stop_on_original_loop(), self._loop)
             await asyncio.wrap_future(future)
-        # Remove from instances
-        try:
-            EventBus._instances.remove(self)
-        except ValueError:
-            pass
+        # Clear all listeners and state
+        self._listeners.clear()
+        self._wildcards.clear()
         logger.info("EventBus stopped")
 
     async def _stop_on_original_loop(self) -> None:
         await self._dispatcher.stop()
         await self._scheduler.stop()
 
-    async def publish(self, event: BaseEvent, *, delay: float = 0.0) -> None:
+    def publish(self, event: BaseEvent, *, delay: float = 0.0) -> asyncio.Task:
         """
         Publish an event. If delay > 0, schedule for later.
-        This method is asynchronous; it awaits the dispatch of all listeners.
+        Returns a Task that can be awaited to wait for dispatch completion.
+        The dispatch runs in the background regardless of whether the task is awaited.
         """
         if delay > 0:
-            await self._schedule_delayed(event, delay)
-            return
+            # For delayed events, we need to schedule on the event loop
+            if self._loop and not self._loop.is_closed():
+                task = asyncio.run_coroutine_threadsafe(self._schedule_delayed(event, delay), self._loop)
+                # Wrap in a Task-like object
+                return asyncio.wrap_future(task)
+            return asyncio.create_task(asyncio.sleep(0))  # dummy task
         # Ensure bus is started
         if not self._running:
-            await self.start()
-        # Run dispatch and await completion
-        await self._dispatch_now(event)
+            # Start synchronously if not running - this is a best effort
+            if self._loop and not self._loop.is_closed():
+                asyncio.run_coroutine_threadsafe(self.start(), self._loop)
+            else:
+                # No loop available, can't start
+                logger.warning("EventBus not started and no event loop available")
+                return asyncio.create_task(asyncio.sleep(0))
+        # Fire and forget - schedule dispatch as background task
+        if self._loop and not self._loop.is_closed():
+            try:
+                # Try to get the current running loop - if we're in the same thread, use create_task
+                current_loop = asyncio.get_running_loop()
+                if current_loop is self._loop:
+                    # Same loop - use create_task directly (much faster)
+                    return current_loop.create_task(self._dispatch_now(event))
+                else:
+                    # Different loop - use run_coroutine_threadsafe
+                    future = asyncio.run_coroutine_threadsafe(self._dispatch_now(event), self._loop)
+                    return asyncio.wrap_future(future)
+            except RuntimeError:
+                # No running loop - use run_coroutine_threadsafe
+                future = asyncio.run_coroutine_threadsafe(self._dispatch_now(event), self._loop)
+                return asyncio.wrap_future(future)
+        return asyncio.create_task(asyncio.sleep(0))  # dummy task
 
     async def _dispatch_now(self, event: BaseEvent) -> None:
         listeners = self._match_listeners(event)
@@ -131,17 +180,19 @@ class EventBus:
                         # Fallback: assume coroutine
                         async_tasks.append(asyncio.create_task(coro))
                 else:
+                    # Run sync callbacks directly in event loop (not thread pool)
+                    # This allows them to use asyncio.create_task if needed
                     sync_calls.append(entry.callback)
             except Exception:
                 logger.exception("Listener %s raised during scheduling", entry.callback)
 
-        # Run sync callbacks in thread pool
+        # Run sync callbacks directly in event loop
         if sync_calls:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = asyncio.get_event_loop()
-            await asyncio.gather(*[loop.run_in_executor(None, cb, event) for cb in sync_calls])
+            for cb in sync_calls:
+                try:
+                    cb(event)
+                except Exception:
+                    logger.exception("Sync listener %s raised", cb)
 
         # Await all async listener tasks
         if async_tasks:
@@ -192,6 +243,12 @@ class EventBus:
 
         def _unsub():
             self.unsubscribe(callback)
+            # Also remove from global listener registry if present
+            try:
+                from .listeners import listener_registry
+                listener_registry.remove_callback(callback)
+            except Exception:
+                pass
         # Attach unsubscribe to the callback for test compatibility
         try:
             callback._nova_unsubscribe = _unsub
@@ -229,5 +286,24 @@ class EventBus:
         return self._metrics
 
 
+# Singleton accessor
+_event_bus_lock = None
+
 def get_event_bus() -> EventBus:
-    return EventBus()
+    """Return the process‑wide EventBus instance, creating it on first call."""
+    global _event_bus_lock
+    if EventBus._instance is None:
+        # Double-checked locking pattern for thread safety
+        if _event_bus_lock is None:
+            import threading
+            _event_bus_lock = threading.Lock()
+        with _event_bus_lock:
+            if EventBus._instance is None:
+                EventBus._instance = EventBus()
+    return EventBus._instance
+
+
+# Backward‑compatible synchronous accessor (creates if needed)
+def get_event_bus_sync() -> EventBus:
+    """Synchronous accessor used by legacy code; creates the bus if needed."""
+    return get_event_bus()
