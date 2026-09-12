@@ -47,16 +47,15 @@ class ListenerRegistry:
             })
             # Also subscribe to any already-running EventBus instances
             from .event_bus import EventBus
-            for bus in EventBus._instances:
-                if bus._running:
-                    bus.subscribe(
-                        event_type=event_type,
-                        callback=func,
-                        priority=priority,
-                        filters=filters,
-                        async_mode=effective_async,
-                        once=once,
-                    )
+            if EventBus._instance is not None and EventBus._instance._running:
+                EventBus._instance.subscribe(
+                    event_type=event_type,
+                    callback=func,
+                    priority=priority,
+                    filters=filters,
+                    async_mode=effective_async,
+                    once=once,
+                )
             return func
         return decorator
 
@@ -97,6 +96,10 @@ class ListenerRegistry:
             except Exception:
                 pass
         self._handles.clear()
+
+    def remove_callback(self, callback: Callable) -> None:
+        """Remove a specific callback from the registry entries."""
+        self._entries = [e for e in self._entries if e.get("callback") is not callback]
 
 
 # Global registry instance used by plugins and core modules
