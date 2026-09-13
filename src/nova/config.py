@@ -117,7 +117,13 @@ class Settings(BaseSettings):
     nova_after_song_delay_s: float = Field(default=1.0, ge=0)
     nova_welcome_cache_enabled: bool = True
 
-    # ElevenLabs ---------------------------------------------------------
+    # --- Local Windows SAPI / TTS ----------------------------------------
+    tts_provider: str = Field(default="windows_sapi")
+    tts_voice: Optional[str] = None
+    tts_speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    tts_volume: float = Field(default=1.0, ge=0.0, le=1.0)
+
+    # ElevenLabs (backward compatibility) --------------------------------
     elevenlabs_api_key: Optional[str] = None
     elevenlabs_voice_id: Optional[str] = None
     elevenlabs_model_id: str = "eleven_multilingual_v2"
@@ -163,14 +169,6 @@ class Settings(BaseSettings):
             )
         return v
 
-    @model_validator(mode="after")
-    def _warn_missing_elevenlabs(self) -> "Settings":
-        if self.nova_welcome_enabled and not self.elevenlabs_voice_id:
-            logging.getLogger(__name__).warning(
-                "NOVA_WELCOME_ENABLED=True but ELEVENLABS_VOICE_ID is not set. "
-                "TTS will be skipped until both ELEVENLABS_VOICE_ID and ELEVENLABS_API_KEY are provided."
-            )
-        return self
 
 
 # Single instance used throughout the project

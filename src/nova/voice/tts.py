@@ -3,6 +3,7 @@ Text-to-Speech abstraction for speech synthesis.
 """
 from __future__ import annotations
 
+import sys
 import logging
 import asyncio
 from abc import ABC, abstractmethod
@@ -337,19 +338,41 @@ class ElevenLabsTTSProvider(BaseTTSProvider):
 class WindowsSAPIProvider(BaseTTSProvider):
     """Windows SAPI TTS provider (built-in Windows TTS)."""
 
-    def __init__(self, config: TTSConfig):
+    def __init__(self, config: Optional[TTSConfig] = None):
+        if config is None:
+            config = TTSConfig(provider=TTSProvider.WINDOWS_SAPI)
         super().__init__(config)
         self._speaker = None
 
+    def _apply_config(self, speaker: Any) -> None:
+        """Apply speed, volume, and voice settings to an SpVoice COM instance."""
+        try:
+            if hasattr(self.config, "speed") and self.config.speed != 1.0:
+                speaker.Rate = max(-10, min(10, int((self.config.speed - 1.0) * 10)))
+            if hasattr(self.config, "volume") and self.config.volume != 1.0:
+                speaker.Volume = max(0, min(100, int(self.config.volume * 100)))
+            if getattr(self.config, "voice", None):
+                for v in speaker.GetVoices():
+                    if self.config.voice.lower() in v.GetDescription().lower():
+                        speaker.Voice = v
+                        break
+        except Exception as e:
+            logger.warning("Failed to apply SAPI voice/speed/volume config: %s", e)
+
     async def initialize(self) -> bool:
         try:
-            import win32com.client
-
-            self._speaker = win32com.client.Dispatch("SAPI.SpVoice")
-            self._initialized = True
-            logger.info("Windows SAPI TTS provider initialized")
-            return True
-
+            import pythoncom
+            pythoncom.CoInitialize()
+            try:
+                import win32com.client
+                speaker = win32com.client.Dispatch("SAPI.SpVoice")
+                self._apply_config(speaker)
+                self._speaker = speaker
+                self._initialized = True
+                logger.info("Windows SAPI TTS provider initialized")
+                return True
+            finally:
+                pythoncom.CoUninitialize()
         except ImportError:
             logger.warning("pywin32 not installed")
             return False
@@ -361,41 +384,81 @@ class WindowsSAPIProvider(BaseTTSProvider):
         self._speaker = None
         self._initialized = False
 
+    def speak(self, text: str) -> bool:
+        """Speak text directly via Windows SAPI to the default audio output device."""
+        if not text or not text.strip():
+            return True
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+            try:
+                if "win32com.client" in sys.modules and hasattr(sys.modules["win32com.client"], "Dispatch"):
+                    dispatch_fn = sys.modules["win32com.client"].Dispatch
+                else:
+                    try:
+                        import win32com.client
+                        dispatch_fn = win32com.client.Dispatch
+                    except (ImportError, ModuleNotFoundError):
+                        import win32com
+                        dispatch_fn = getattr(win32com, "client", win32com).Dispatch
+                speaker = dispatch_fn("SAPI.SpVoice")
+                self._apply_config(speaker)
+                speaker.Speak(text)
+                del speaker
+                return True
+            finally:
+                pythoncom.CoUninitialize()
+        except Exception as e:
+            logger.warning("Windows SAPI speech failed: %s", e)
+            return False
+
     async def synthesize(self, request: VoiceRequest) -> VoiceResponse:
         import tempfile
         import soundfile as sf
-        import numpy as np
+        import pythoncom
+        import win32com.client
+        from pathlib import Path
 
-        if not self._speaker:
-            raise TTSError("SAPI speaker not initialized")
+        try:
+            pythoncom.CoInitialize()
+            try:
+                speaker = win32com.client.Dispatch("SAPI.SpVoice")
+                self._apply_config(speaker)
+                if request.speed != 1.0:
+                    speaker.Rate = max(-10, min(10, int((request.speed - 1.0) * 10)))
+                if request.volume != 1.0:
+                    speaker.Volume = max(0, min(100, int(request.volume * 100)))
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            self._speaker.Rate = int((request.speed - 1.0) * 10)
-            self._speaker.Volume = int(request.volume * 100)
-            self._speaker.AudioOutputStream = None  # Use default
-            self._speaker.Speak(request.text)
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    tmp_path = tmp.name
 
-            # SAPI doesn't directly give audio data - use SpFileStream
-            # This is a simplified implementation
-            import pythoncom
-            from comtypes.client import CreateObject
+                from comtypes.client import CreateObject
+                stream = CreateObject("SAPI.SpFileStream")
+                stream.Open(tmp_path, 3)  # SSFMCreateForWrite
+                speaker.AudioOutputStream = stream
+                speaker.Speak(request.text)
+                stream.Close()
+                del stream
+                del speaker
 
-            stream = CreateObject("SAPI.SpFileStream")
-            stream.Open(tmp.name, 3)  # SSFMCreateForWrite
-            self._speaker.AudioOutputStream = stream
-            self._speaker.Speak(request.text)
-            stream.Close()
+                audio_data, sr = sf.read(tmp_path)
+                try:
+                    Path(tmp_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
 
-            import soundfile as sf
-            audio_data, sr = sf.read(tmp.name)
-
-            return VoiceResponse(
-                audio_data=audio_data.tobytes(),
-                format=request.format,
-                sample_rate=sr,
-                duration_ms=len(request.text) * 50,
-                provider="windows_sapi",
-            )
+                return VoiceResponse(
+                    audio_data=audio_data.tobytes(),
+                    format=request.format,
+                    sample_rate=sr,
+                    duration_ms=len(request.text) * 50,
+                    provider="windows_sapi",
+                )
+            finally:
+                pythoncom.CoUninitialize()
+        except Exception as e:
+            logger.error(f"SAPI synthesis failed: {e}")
+            raise TTSError(f"SAPI synthesis failed: {e}", provider="windows_sapi") from e
 
     async def synthesize_stream(self, request: VoiceRequest) -> AsyncIterator[bytes]:
         raise NotImplementedError("Streaming not supported for SAPI")
@@ -405,31 +468,43 @@ class WindowsSAPIProvider(BaseTTSProvider):
         request: VoiceRequest,
         file_path: Path,
     ) -> VoiceResponse:
-        import tempfile
         import soundfile as sf
-        import numpy as np
-
-        if not self._speaker:
-            raise TTSError("SAPI speaker not initialized")
-
         import pythoncom
-        from comtypes.client import CreateObject
+        import win32com.client
 
-        stream = CreateObject("SAPI.SpFileStream")
-        stream.Open(str(file_path), 3)  # SSFMCreateForWrite
-        self._speaker.AudioOutputStream = stream
-        self._speaker.Speak(request.text)
-        stream.Close()
+        try:
+            pythoncom.CoInitialize()
+            try:
+                speaker = win32com.client.Dispatch("SAPI.SpVoice")
+                self._apply_config(speaker)
+                if request.speed != 1.0:
+                    speaker.Rate = max(-10, min(10, int((request.speed - 1.0) * 10)))
+                if request.volume != 1.0:
+                    speaker.Volume = max(0, min(100, int(request.volume * 100)))
 
-        audio_data, sr = sf.read(file_path)
+                from comtypes.client import CreateObject
+                stream = CreateObject("SAPI.SpFileStream")
+                stream.Open(str(file_path), 3)  # SSFMCreateForWrite
+                speaker.AudioOutputStream = stream
+                speaker.Speak(request.text)
+                stream.Close()
+                del stream
+                del speaker
 
-        return VoiceResponse(
-            audio_data=audio_data.tobytes(),
-            format=request.format,
-            sample_rate=sr,
-            duration_ms=len(request.text) * 50,
-            provider="windows_sapi",
-        )
+                audio_data, sr = sf.read(str(file_path))
+
+                return VoiceResponse(
+                    audio_data=audio_data.tobytes(),
+                    format=request.format,
+                    sample_rate=sr,
+                    duration_ms=len(request.text) * 50,
+                    provider="windows_sapi",
+                )
+            finally:
+                pythoncom.CoUninitialize()
+        except Exception as e:
+            logger.error(f"SAPI file synthesis failed: {e}")
+            raise TTSError(f"SAPI file synthesis failed: {e}", provider="windows_sapi") from e
 
     @property
     def name(self) -> TTSProvider:
@@ -596,7 +671,7 @@ class TTSService:
 
     def __init__(
         self,
-        provider: TTSProvider = TTSProvider.PLACEHOLDER,
+        provider: TTSProvider = TTSProvider.WINDOWS_SAPI,
         config: Optional[TTSConfig] = None,
     ):
         self._provider = create_tts_provider(config or TTSConfig(provider=provider))
@@ -635,7 +710,7 @@ _tts_service: Optional[TTSService] = None
 
 
 def get_tts_provider(
-    provider: TTSProvider = TTSProvider.PLACEHOLDER,
+    provider: TTSProvider = TTSProvider.WINDOWS_SAPI,
     config: Optional[TTSConfig] = None,
 ) -> TTSService:
     """Get or create global TTS provider instance."""
