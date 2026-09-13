@@ -15,60 +15,31 @@ from nova.skills.registry import registry
 
 class TestPlanner:
     def setup_method(self):
-        """Setup for each test."""
-        # Reset registry
+        """Setup for each test — save and clear global registry."""
+        self._saved_skills = dict(registry._skills)
+        self._saved_by_intent = {k: list(v) for k, v in registry._skills_by_intent.items()}
         registry._skills.clear()
 
     def teardown_method(self):
-        """Teardown for each test."""
+        """Teardown for each test — restore original registry state."""
         registry._skills.clear()
+        registry._skills.update(self._saved_skills)
+        registry._skills_by_intent.clear()
+        registry._skills_by_intent.update(self._saved_by_intent)
 
     @pytest.mark.asyncio
     async def test_single_step_planning(self):
-        """Test that single intent creates single-step plan."""
+        """Test that single intent creates single-step plan without LLM."""
         planner = Planner()
         await planner.initialize()
         
         # Register a mock skill
         from nova.skills.base import BaseSkill
         class MockSkill(BaseSkill):
-            intent = "test_tool"
+            intent = "open_application"
             description = "A test tool"
             def can_handle(self, intent_data):
-                return intent_data.get("intent") == "test_tool"
-            async def execute(self, intent_data):
-                return {"status": "ok", "detail": "done"}
-        
-        registry.register(MockSkill())
-        
-        intent = IntentResult(
-            category=IntentCategory.OPEN_APPLICATION,
-            confidence=0.9,
-            confidence_level=ConfidenceLevel.HIGH,
-            entities={"application": "Chrome"}
-        )
-        
-        plan = await planner.plan("open Chrome", intent, None)
-        
-        assert isinstance(plan, ExecutionPlan)
-        assert len(plan.steps) == 1
-        assert plan.steps[0].tool == "open_application"
-        assert plan.steps[0].parameters == {"application": "Chrome"}
-        assert plan.steps[0].depends_on == []
-
-    @pytest.mark.asyncio
-    async def test_single_step_planning(self):
-        """Test that single intent creates single-step plan."""
-        planner = Planner()
-        await planner.initialize()
-        
-        # Register a mock skill
-        from nova.skills.base import BaseSkill
-        class MockSkill(BaseSkill):
-            intent = "test_tool"
-            description = "A test tool"
-            def can_handle(self, intent_data):
-                return intent_data.get("intent") == "test_tool"
+                return intent_data.get("intent") == "open_application"
             async def execute(self, intent_data):
                 return {"status": "ok", "detail": "done"}
         
@@ -154,15 +125,14 @@ class TestPlanner:
         )
         
         # Mock LLM to return a multi-step plan
-        # Provide context to force LLM path (single-step optimization is skipped when context exists)
         mock_llm_response = MagicMock()
-        mock_llm_response.response_text = '''{
-            "steps": [
-                {"tool": "open_application", "parameters": {"application": "Chrome"}, "depends_on": []},
-                {"tool": "screen.read", "parameters": {}, "depends_on": [0]}
+        mock_llm_response.plan = ExecutionPlan(
+            steps=[
+                PlanStep(tool="open_application", parameters={"application": "Chrome"}, depends_on=[]),
+                PlanStep(tool="screen.read", parameters={}, depends_on=[0]),
             ],
-            "description": "Open Chrome then read screen"
-        }'''
+            description="Open Chrome then read screen",
+        )
         
         with patch.object(planner._llm_manager, 'process', new_callable=AsyncMock, return_value=mock_llm_response):
             plan = await planner.plan("open Chrome and read screen", intent, {"previous": "context"})
@@ -197,16 +167,14 @@ class TestPlanner:
             entities={}
         )
         
-        # Mock LLM to return a plan with unknown tool
-        # Provide context to force LLM path
         mock_llm_response = MagicMock()
-        mock_llm_response.response_text = '''{
-            "steps": [
-                {"tool": "open_application", "parameters": {"application": "Chrome"}, "depends_on": []},
-                {"tool": "fake_tool", "parameters": {}, "depends_on": [0]}
+        mock_llm_response.plan = ExecutionPlan(
+            steps=[
+                PlanStep(tool="open_application", parameters={"application": "Chrome"}, depends_on=[]),
+                PlanStep(tool="fake_tool", parameters={}, depends_on=[0]),
             ],
-            "description": "Plan with fake tool"
-        }'''
+            description="Plan with fake tool",
+        )
         
         with patch.object(planner._llm_manager, 'process', new_callable=AsyncMock, return_value=mock_llm_response):
             with pytest.raises(ValueError, match="unknown tool"):
@@ -236,60 +204,60 @@ class TestPlanner:
             entities={}
         )
         
-        # Provide context to force LLM path
         # Test forward reference
         mock_llm_response = MagicMock()
-        mock_llm_response.response_text = '''{
-            "steps": [
-                {"tool": "open_application", "parameters": {}, "depends_on": [1]},
-                {"tool": "open_application", "parameters": {}, "depends_on": []}
+        mock_llm_response.plan = ExecutionPlan(
+            steps=[
+                PlanStep(tool="open_application", parameters={}, depends_on=[1]),
+                PlanStep(tool="open_application", parameters={}, depends_on=[]),
             ],
-            "description": "Forward reference"
-        }'''
+            description="Forward reference",
+        )
         
         with patch.object(planner._llm_manager, 'process', new_callable=AsyncMock, return_value=mock_llm_response):
             with pytest.raises(ValueError, match="forward reference"):
                 await planner.plan("test", intent, {"previous": "context"})
         
         # Test self-dependency
-        mock_llm_response.response_text = '''{
-            "steps": [
-                {"tool": "open_application", "parameters": {}, "depends_on": [0]}
+        mock_llm_response.plan = ExecutionPlan(
+            steps=[
+                PlanStep(tool="open_application", parameters={}, depends_on=[0]),
             ],
-            "description": "Self dependency"
-        }'''
+            description="Self dependency",
+        )
         
         with patch.object(planner._llm_manager, 'process', new_callable=AsyncMock, return_value=mock_llm_response):
-            with pytest.raises(ValueError, match="not a previous step"):
+            with pytest.raises(ValueError, match="(self-dependency|not a previous step)"):
                 await planner.plan("test", intent, {"previous": "context"})
         
         # Test negative dependency
-        mock_llm_response.response_text = '''{
-            "steps": [
-                {"tool": "open_application", "parameters": {}, "depends_on": [-1]}
+        mock_llm_response.plan = ExecutionPlan(
+            steps=[
+                PlanStep(tool="open_application", parameters={}, depends_on=[-1]),
             ],
-            "description": "Negative dependency"
-        }'''
+            description="Negative dependency",
+        )
         
         with patch.object(planner._llm_manager, 'process', new_callable=AsyncMock, return_value=mock_llm_response):
             with pytest.raises(ValueError, match="negative dependency"):
                 await planner.plan("test", intent, {"previous": "context"})
         
         # Test out of bounds dependency
-        mock_llm_response.response_text = '''{
-            "steps": [
-                {"tool": "open_application", "parameters": {}, "depends_on": [5]}
+        mock_llm_response.plan = ExecutionPlan(
+            steps=[
+                PlanStep(tool="open_application", parameters={}, depends_on=[5]),
             ],
-            "description": "Out of bounds dependency"
-        }'''
+            description="Out of bounds dependency",
+        )
         
         with patch.object(planner._llm_manager, 'process', new_callable=AsyncMock, return_value=mock_llm_response):
-            with pytest.raises(ValueError, match="not a previous step"):
+            with pytest.raises(ValueError, match="(out-of-bounds|not a previous step)"):
                 await planner.plan("test", intent, {"previous": "context"})
 
     @pytest.mark.asyncio
-    async def test_invalid_json_fallback(self):
-        """Test that invalid JSON falls back to single step."""
+    async def test_invalid_json_fails_truthfully(self):
+        """Test that invalid JSON fails truthfully and does not silently fall back."""
+        from nova.brain.exceptions import PlanningError
         planner = Planner()
         await planner.initialize()
         
@@ -308,21 +276,17 @@ class TestPlanner:
             category=IntentCategory.OPEN_APPLICATION,
             confidence=0.9,
             confidence_level=ConfidenceLevel.HIGH,
-            entities={"application": "Chrome"}
+            entities={"application": "Chrome and search youtube"}
         )
         
-        mock_llm_response = MagicMock()
-        mock_llm_response.response_text = "not valid json"
-        
-        with patch.object(planner._llm_manager, 'process', new_callable=AsyncMock, return_value=mock_llm_response):
-            plan = await planner.plan("open Chrome", intent, None)
-        
-        assert len(plan.steps) == 1
-        assert plan.steps[0].tool == "open_application"
+        with patch.object(planner._llm_manager, 'process', new_callable=AsyncMock, side_effect=PlanningError("Invalid JSON")):
+            with pytest.raises(PlanningError):
+                await planner.plan("open Chrome and search youtube", intent, {"context": True})
 
     @pytest.mark.asyncio
-    async def test_empty_plan_fallback(self):
-        """Test that empty plan falls back to single step."""
+    async def test_empty_plan_fails_truthfully(self):
+        """Test that empty plan fails validation truthfully and does not silently fall back."""
+        from nova.brain.exceptions import PlanValidationError
         planner = Planner()
         await planner.initialize()
         
@@ -341,17 +305,15 @@ class TestPlanner:
             category=IntentCategory.OPEN_APPLICATION,
             confidence=0.9,
             confidence_level=ConfidenceLevel.HIGH,
-            entities={"application": "Chrome"}
+            entities={"application": "Chrome and search youtube"}
         )
         
         mock_llm_response = MagicMock()
-        mock_llm_response.response_text = '{"steps": [], "description": "empty"}'
+        mock_llm_response.plan = ExecutionPlan(steps=[], description="empty")
         
         with patch.object(planner._llm_manager, 'process', new_callable=AsyncMock, return_value=mock_llm_response):
-            plan = await planner.plan("open Chrome", intent, None)
-        
-        assert len(plan.steps) == 1
-        assert plan.steps[0].tool == "open_application"
+            with pytest.raises((PlanValidationError, ValueError)):
+                await planner.plan("open Chrome and search youtube", intent, {"context": True})
 
     @pytest.mark.asyncio
     async def test_plan_steps_contain_depends_on(self):
@@ -387,13 +349,13 @@ class TestPlanner:
         )
         
         mock_llm_response = MagicMock()
-        mock_llm_response.response_text = '''{
-            "steps": [
-                {"tool": "open_application", "parameters": {"application": "Chrome"}, "depends_on": []},
-                {"tool": "screen.read", "parameters": {}, "depends_on": [0]}
+        mock_llm_response.plan = ExecutionPlan(
+            steps=[
+                PlanStep(tool="open_application", parameters={"application": "Chrome"}, depends_on=[]),
+                PlanStep(tool="screen.read", parameters={}, depends_on=[0]),
             ],
-            "description": "Open Chrome then read screen"
-        }'''
+            description="Open Chrome then read screen",
+        )
         
         # Provide context to force LLM path
         with patch.object(planner._llm_manager, 'process', new_callable=AsyncMock, return_value=mock_llm_response):

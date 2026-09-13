@@ -25,10 +25,15 @@ class MockSkill(BaseSkill):
 
 @pytest.fixture(autouse=True)
 def setup_registry():
+    saved_skills = dict(registry._skills)
+    saved_by_intent = {k: list(v) for k, v in registry._skills_by_intent.items()}
     registry._skills.clear()
     registry.register(MockSkill())
     yield
     registry._skills.clear()
+    registry._skills.update(saved_skills)
+    registry._skills_by_intent.clear()
+    registry._skills_by_intent.update(saved_by_intent)
 
 
 @pytest.mark.asyncio
