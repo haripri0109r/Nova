@@ -45,6 +45,16 @@ class _SkillsDict(dict):
         self._registry_ref._skills_by_intent.pop(key, None)
 
 
+INTENT_ALIASES: Dict[str, str] = {
+    "bluetooth_control": "bluetooth",
+    "wifi_control": "wifi",
+    "volume_control": "set_volume",
+    "brightness_control": "set_brightness",
+    "settings": "open_settings",
+    "set_personalization": "personalization",
+}
+
+
 class SkillRegistry:
     """
     Holds a mapping intent -> skill instances, supporting multiple skills
@@ -82,9 +92,10 @@ class SkillRegistry:
         If no candidate matches the specific intent_data, returns None.
         If intent_data is None, returns the primary candidate.
         """
-        candidates = self._skills_by_intent.get(intent, [])
+        canonical = INTENT_ALIASES.get(intent, intent)
+        candidates = self._skills_by_intent.get(canonical, [])
         if not candidates:
-            return self._skills.get(intent)
+            return self._skills.get(canonical)
 
         if intent_data is not None and len(candidates) > 1:
             for candidate in candidates:
@@ -109,6 +120,24 @@ class SkillRegistry:
                 if skill not in unique:
                     unique.append(skill)
         return unique
+
+    def get_tool_definitions(self) -> List[Dict[str, Any]]:
+        """Return canonical tool definitions from registered skills for LLM planning."""
+        tools: List[Dict[str, Any]] = []
+        seen_intents = set()
+        for skill in self.all():
+            if skill.intent and skill.intent not in seen_intents:
+                seen_intents.add(skill.intent)
+                schema = getattr(skill, "parameters_schema", None)
+                if schema is None:
+                    schema = getattr(skill, "parameter_schema", {})
+                tools.append({
+                    "tool": skill.intent,
+                    "description": skill.description,
+                    "parameters_schema": schema if isinstance(schema, dict) else {},
+                    "parameters": schema if isinstance(schema, dict) else {},
+                })
+        return tools
 
     async def initialize_all(self) -> None:
         """Initialize all registered skills."""

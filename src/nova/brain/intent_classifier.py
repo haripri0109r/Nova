@@ -7,6 +7,43 @@ from typing import Any, Dict, List, Optional
 from .models import RecognizedInput, IntentResult
 from .types import IntentCategory, ConfidenceLevel, IntentClassifierConfig
 from .exceptions import IntentClassificationError
+from .compound import extract_clean_application_target, is_compound_command
+
+
+def normalize_noisy_stt(text: str) -> str:
+    """
+    Conservative speech-to-text normalization for common Windows assistant commands.
+    Transforms obvious phonetic slips and polite conversational prefixes without
+    distorting arbitrary user text.
+    """
+    import re
+    if not text:
+        return text
+
+    # 1. Strip polite / conversational leading prefixes
+    cleaned = re.sub(
+        r"^(?:can you|could you|please|would you)\s+",
+        "",
+        text.strip(),
+        flags=re.IGNORECASE,
+    ).strip()
+
+    # 2. Conservative acoustic/phonetic replacements for common keywords
+    replacements = [
+        (r"\bcloze\b", "close"),
+        (r"\bturm\b", "turn"),
+        (r"\bcrome\b", "chrome"),
+        (r"\bincrese\b", "increase"),
+        (r"\bdecrese\b", "decrease"),
+        (r"\bnote\s+pad\b", "notepad"),
+        (r"\bwi-fi\b", "wifi"),
+        (r"\bblue\s+tooth\b", "bluetooth"),
+        (r"\bturn\s+(.*?)\s+of$", r"turn \1 off"),
+    ]
+    for pattern, repl in replacements:
+        cleaned = re.sub(pattern, repl, cleaned, flags=re.IGNORECASE)
+
+    return cleaned.strip()
 
 
 class BaseIntentClassifier(ABC):
@@ -58,7 +95,8 @@ class PlaceholderIntentClassifier(BaseIntentClassifier):
     async def classify(self, inp: RecognizedInput) -> IntentResult:
         import re
         raw_text = inp.text.strip()
-        text = raw_text.lower()
+        normalized_text = normalize_noisy_stt(raw_text)
+        text = normalized_text.lower()
         entities: Dict[str, Any] = {}
         conf = 0.5
         cat = IntentCategory.GENERAL_CONVERSATION
@@ -71,14 +109,20 @@ class PlaceholderIntentClassifier(BaseIntentClassifier):
         step_index = None
         filter_status = None
 
-        # Retry step: "retry step", "retry that step", "retry step 2", "retry step #2", "redo step 2"
-        m_retry = re.match(r"^(?:retry|redo)(?:\s+(?:that|the))?\s+step(?:\s+(?:#\s*)?(\d+))?(?:\s+(?:for|of|in)?\s+task\s+([a-zA-Z0-9_-]+))?$", text)
+        # Retry step: "retry step", "retry that step", "retry step 2", "retry step #2", "redo step 2",
+        # with optional confirmation keyword: "retry step 2 confirm", "confirm retry step 2", "retry step confirm"
+        is_confirmed = False
+        m_retry = re.match(r"^(confirm\s+)?(?:retry|redo)(?:\s+(?:that|the))?\s+step(?:\s+(?:#\s*)?(\d+))?(?:\s+(?:for|of|in)?\s+task\s+([a-zA-Z0-9_-]+))?(\s+confirm)?$", text)
         if m_retry:
             task_control_action = "retry_step"
-            if m_retry.group(1):
-                step_index = int(m_retry.group(1))
+            prefix_confirm = bool(m_retry.group(1))
+            suffix_confirm = bool(m_retry.group(4))
+            if prefix_confirm or suffix_confirm:
+                is_confirmed = True
             if m_retry.group(2):
-                task_id = m_retry.group(2)
+                step_index = int(m_retry.group(2))
+            if m_retry.group(3):
+                task_id = m_retry.group(3)
 
         # Skip step: "skip step", "skip that step", "skip step 2", "skip step #3"
         m_skip = re.match(r"^skip(?:\s+(?:that|the))?\s+step(?:\s+(?:#\s*)?(\d+))?(?:\s+(?:for|of|in)?\s+task\s+([a-zA-Z0-9_-]+))?$", text)
@@ -137,6 +181,23 @@ class PlaceholderIntentClassifier(BaseIntentClassifier):
                         task_control_action = "cancel"
                         task_id = m_cancel_id.group(1)
 
+        # Confirm / resume execution of pending high-risk action:
+        # "confirm", "confirm task", "confirm shutdown", "confirm restart",
+        # "confirm shutdown <token>", "confirm <token>"
+        m_confirm = re.match(
+            r"^confirm(?:\s+(shutdown|restart|the\s+task|task))?(?:\s+([a-zA-Z0-9_-]+))?$",
+            text,
+        )
+        if not task_control_action and m_confirm:
+            task_control_action = "resume"
+            is_confirmed = True
+            tool_target = m_confirm.group(1)
+            if tool_target in ("shutdown", "restart"):
+                entities["target_tool"] = tool_target
+            token_val = m_confirm.group(2)
+            if token_val:
+                entities["confirmation_token"] = token_val
+
         # Task query - Status: "task status", "what is my task doing?", "how is my task going?", "status of task 491c", "status of task"
         if not task_control_action:
             m_status_1 = re.match(r"^(?:task\s+status|status\s+of\s+(?:the\s+|my\s+|current\s+)?task|task\s+progress)(?:\s*[:#]?\s*([a-zA-Z0-9_-]+))?$", text)
@@ -182,6 +243,8 @@ class PlaceholderIntentClassifier(BaseIntentClassifier):
                 entities["task_id"] = task_id
             if step_index is not None:
                 entities["step_index"] = step_index
+            if is_confirmed:
+                entities["confirmed"] = True
         elif task_query_action:
             cat = IntentCategory.TASK_QUERY
             conf = 0.95
@@ -191,13 +254,19 @@ class PlaceholderIntentClassifier(BaseIntentClassifier):
             if filter_status:
                 entities["filter_status"] = filter_status
 
-        # 1. Screen reading
-        elif any(k in text for k in ("screen", "what's on", "what is on", "read my screen")):
+        # 1. Lock workstation (evaluated before screen read so 'lock the screen' locks)
+        elif re.match(r"^(?:lock|lock\s+(?:the\s+|my\s+)?(?:pc|computer|screen|workstation|system))$", text):
+            cat = IntentCategory.LOCK
+            conf = 0.95
+            entities = {}
+
+        # 2. Screen reading
+        elif any(k in text for k in ("what's on", "what is on", "read my screen", "read screen")) or text == "screen" or ("screen" in text and not any(k in text for k in ("lock", "dim", "brighten"))):
             cat = IntentCategory.SCREEN_READ
             conf = 0.9
 
-        # 2. Volume control
-        elif any(k in text for k in ("volume", "sound", "mute", "unmute")):
+        # 3. Volume control
+        elif any(k in text for k in ("volume", "sound", "mute", "unmute")) and "settings" not in text:
             cat = IntentCategory.SET_VOLUME
             conf = 0.9
             if "mute" in text and "unmute" not in text:
@@ -217,12 +286,112 @@ class PlaceholderIntentClassifier(BaseIntentClassifier):
                 m = re.search(r"(\d+)", text)
                 entities["level"] = int(m.group(1)) if m else 50
 
-        # 3. Application / Browser Launching
-        elif any(text.startswith(prefix) for prefix in ("open", "launch", "start", "run")):
+        # 4. Brightness control
+        elif any(k in text for k in ("brightness", "dim screen", "brighten screen")) and "settings" not in text:
+            cat = IntentCategory.SET_BRIGHTNESS
+            conf = 0.95
+            if any(k in text for k in ("decrease", "lower", "reduce", "down", "dim")):
+                entities = {"action": "decrease", "amount": 10}
+            elif any(k in text for k in ("increase", "raise", "up", "brighten")):
+                entities = {"action": "increase", "amount": 10}
+            else:
+                m = re.search(r"(\d+)", text)
+                entities = {"action": "set", "level": int(m.group(1)) if m else 50}
+
+        # 5. Bluetooth control
+        elif any(k in text for k in ("bluetooth", "blue tooth")) and "settings" not in text:
+            cat = IntentCategory.BLUETOOTH
+            conf = 0.95
+            if any(k in text for k in ("off", "disable", "disconnect")):
+                entities = {"action": "disable"}
+            elif any(k in text for k in ("on", "enable", "connect", "toggle on")):
+                entities = {"action": "enable"}
+            else:
+                conf = 0.5
+
+        # 6. Wi-Fi control
+        elif any(k in text for k in ("wifi", "wi-fi", "wireless")) and "settings" not in text:
+            cat = IntentCategory.WIFI
+            conf = 0.95
+            if any(k in text for k in ("off", "disable", "disconnect")):
+                entities = {"action": "disable"}
+            elif any(k in text for k in ("on", "enable", "connect", "toggle on")):
+                entities = {"action": "enable"}
+            else:
+                conf = 0.5
+
+        # 7. Personalization (Theme mode, Taskbar alignment, Wallpaper)
+        elif (
+            any(k in text for k in ("dark mode", "light mode", "theme mode"))
+            or (any(k in text for k in ("dark", "light")) and any(k in text for k in ("turn on", "switch to", "enable", "mode", "theme")))
+            or ("taskbar" in text and any(k in text for k in ("left", "center", "centre", "align", "move")))
+            or any(k in text for k in ("wallpaper", "desktop background"))
+        ) and not any(k in text for k in ("settings", "find", "search", "locate")):
+            cat = IntentCategory.PERSONALIZATION
+            conf = 0.95
+            is_compound = is_compound_command(text)
+
+            # Theme detection
+            if any(k in text for k in ("dark mode", "light mode", "theme")) or any(k in text for k in ("dark", "light")):
+                mode = "dark" if "dark" in text else "light"
+                entities = {"feature": "theme", "mode": mode}
+            # Taskbar alignment
+            elif "taskbar" in text:
+                align = "left" if "left" in text else "center"
+                entities = {"feature": "taskbar", "alignment": align}
+            # Wallpaper
+            elif any(k in text for k in ("wallpaper", "desktop background")):
+                m_wall = re.search(r"(?:set|change)\s+(?:desktop\s+)?(?:wallpaper|background)\s+(?:to\s+)?(.+)$", raw_text, re.IGNORECASE)
+                path_val = m_wall.group(1).strip().strip("\"'") if m_wall else ""
+                entities = {"feature": "wallpaper", "path": path_val}
+
+            if is_compound:
+                entities["is_compound"] = True
+                entities["raw_input"] = text
+                conf = 0.5
+
+        # 8. Windows Settings Navigation
+        elif (
+            "settings" in text
+            or any(text.startswith(p) for p in ("open settings", "show settings", "launch settings", "view settings"))
+            or any(k in text for k in ("default apps", "startup apps", "default browser", "change default browser", "set default browser", "change my default browser"))
+            or text in ("settings", "windows settings")
+        ) and not any(k in text for k in ("search", "find", "google")):
+            cat = IntentCategory.OPEN_SETTINGS
+            conf = 0.95
+            is_compound = is_compound_command(text)
+
+            # Check protected browser change -> default_apps
+            if any(k in text for k in ("default browser", "change default browser", "set default browser", "change my default browser")):
+                entities = {"page": "default_apps"}
+            elif any(k in text for k in ("default apps", "default applications")):
+                entities = {"page": "default_apps"}
+            elif any(k in text for k in ("startup apps", "startup applications")):
+                entities = {"page": "startup_apps"}
+            else:
+                m_page = re.search(r"(?:open|show|display|launch|view)\s+(?:the\s+)?([a-z_ &]+?)\s+settings\b", text)
+                if m_page:
+                    extracted = m_page.group(1).strip()
+                    entities = {"page": extracted}
+                else:
+                    m_lead = re.match(r"^([a-z_ &]+?)\s+settings$", text)
+                    if m_lead:
+                        entities = {"page": m_lead.group(1).strip()}
+                    else:
+                        entities = {"page": "root"}
+
+            if is_compound:
+                entities["is_compound"] = True
+                entities["raw_input"] = text
+                conf = 0.5
+
+        # 9. Application / Browser Launching
+        elif any(text.startswith(prefix) for prefix in ("open", "launch", "start", "run")) or text in ("notepad", "calculator", "terminal", "cmd", "powershell", "explorer", "chrome", "edge"):
             m = re.match(r"^(?:open|launch|start|run)\s*(.*)$", text)
-            raw_target = m.group(1).strip() if m else ""
-            target = re.sub(r"^(the|an|a)\s+", "", raw_target).strip()
-            target = re.sub(r"\s+(app|application|program)$", "", target).strip()
+            raw_target = m.group(1).strip() if m else text
+            target, is_compound = extract_clean_application_target(raw_target)
+            if not target and text in ("notepad", "calculator", "terminal", "cmd", "powershell", "explorer", "chrome", "edge"):
+                target = text
 
             if target:
                 if target in ("browser", "web browser", "internet"):
@@ -245,28 +414,77 @@ class PlaceholderIntentClassifier(BaseIntentClassifier):
                     elif target in ("edge", "msedge", "microsoft edge"):
                         entities["browser"] = "edge"
                     conf = 0.9
+
+                if is_compound:
+                    # Flag compound command so downstream Planner routes to LLM planning
+                    entities["is_compound"] = True
+                    entities["raw_input"] = text
+                    conf = 0.5
+                    conf_level = ConfidenceLevel.MEDIUM
             else:
                 cat = IntentCategory.OPEN_APPLICATION
                 entities = {}
                 conf = 0.6
 
-        # 4. Closing application
+        # 8. Closing application
         elif any(text.startswith(prefix) for prefix in ("close", "quit", "exit", "kill")):
             m = re.match(r"^(?:close|quit|exit|kill)\s*(.*)$", text)
             raw_target = m.group(1).strip() if m else ""
             target = re.sub(r"^(the|an|a)\s+", "", raw_target).strip()
             target = re.sub(r"\s+(app|application|program)$", "", target).strip()
+            if target == "crome":
+                target = "chrome"
             cat = IntentCategory.CLOSE_APPLICATION
             entities = {"application": target} if target else {}
             conf = 0.9 if target else 0.6
 
-        # 5. Web search
+        # 9. File search
+        elif (
+            re.match(r"^(?:find|locate)\s+(?:my\s+|the\s+)?(?:document\s+|file\s+)?(.+)$", text)
+            or re.match(r"^search\s+(?:for\s+)?(?:document\s+|file\s+|my\s+)(.+)$", text)
+            or ("resume" in text and any(k in text for k in ("find", "search", "locate")))
+        ) and not any(k in text for k in ("web", "internet", "google", "youtube", "online")):
+            cat = IntentCategory.FIND_FILE
+            conf = 0.9
+            m = re.match(r"^search\s+(?:for\s+)?(?:document\s+|file\s+|my\s+)(.+)$", text)
+            if not m:
+                m = re.match(r"^(?:find|locate)\s+(?:my\s+|the\s+)?(?:document\s+|file\s+)?(.+)$", text)
+            pattern = m.group(1).strip() if m else ""
+            if not pattern and "resume" in text:
+                pattern = "resume"
+            entities = {"pattern": pattern} if pattern else {}
+            if not pattern:
+                conf = 0.5
+
+        # 10. Web search
         elif any(k in text for k in ("search", "google", "lookup")):
             cat = IntentCategory.WEB_SEARCH
-            m = re.search(r"(?:search\s+for|search|google|lookup)\s+(.+)$", text)
+            m = re.search(r"(?:search\s+(?:the\s+)?(?:web|internet)\s+(?:for\s+)?|search\s+for\s+|search\s+|google\s+|lookup\s+)(.+)$", text)
             query = m.group(1).strip() if m else ""
             entities = {"query": query} if query else {}
             conf = 0.85
+
+        # 11. Shutdown system - Must explicitly require pc/computer/system or clean standalone command
+        elif re.match(r"^(?:please\s+)?(?:shutdown|shut\s*down|power\s+off)(?:\s+(?:the\s+|my\s+)?(?:pc|computer|system))?$", text) or \
+             re.match(r"^(?:please\s+)?turn\s+off\s+(?:the\s+|my\s+)?(?:pc|computer|system)$", text) or \
+             text in ("shutdown", "shut down", "power off", "turn off the pc", "turn off the computer", "turn off my pc", "turn off my computer", "shutdown my pc", "shutdown the pc"):
+            cat = IntentCategory.SHUTDOWN
+            conf = 0.95
+            entities = {}
+
+        # 12. Restart system - Must explicitly require pc/computer/system or clean standalone command
+        elif re.match(r"^(?:please\s+)?(?:restart|reboot)(?:\s+(?:the\s+|my\s+)?(?:pc|computer|system))?$", text) or \
+             text in ("restart", "reboot", "restart the pc", "restart the computer", "restart my pc", "restart my computer", "reboot the pc", "reboot my pc"):
+            cat = IntentCategory.RESTART
+            conf = 0.95
+            entities = {}
+
+        # 13. Sleep system - Must explicitly require sleep or put computer/pc to sleep
+        elif re.match(r"^(?:please\s+)?(?:put\s+(?:the\s+|my\s+)?(?:pc|computer|system)\s+to\s+sleep|sleep(?:\s+(?:the\s+|my\s+)?(?:pc|computer|system))?)$", text) or \
+             text in ("sleep", "go to sleep", "put computer to sleep", "put pc to sleep", "sleep pc", "sleep the computer", "sleep my pc", "put my pc to sleep"):
+            cat = IntentCategory.SLEEP
+            conf = 0.95
+            entities = {}
 
         else:
             cat = IntentCategory.GENERAL_CONVERSATION
