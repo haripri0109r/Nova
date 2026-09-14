@@ -39,6 +39,7 @@ from nova.skills.system.sleep import SleepSkill
 from nova.skills.system.volume import VolumeSkill
 from nova.skills.system.wifi import WifiSkill
 from nova.skills.system.network import NetworkSkill
+from nova.skills.system.window import WindowSkill
 
 from nova.brain.validator import PlanValidator
 from nova.brain.models import ExecutionPlan, PlanStep
@@ -68,6 +69,7 @@ CONCRETE_PRODUCTION_SKILLS = [
     VolumeSkill,
     WifiSkill,
     NetworkSkill,
+    WindowSkill,
 ]
 
 
@@ -180,6 +182,8 @@ def test_enum_values_enforcement():
         ("wifi", {"action": "restart"}),
         ("set_brightness", {"action": "maximum"}),
         ("personalization", {"feature": "invalid_feature"}),
+        ("window", {"action": "teleport"}),
+        ("window", {"action": "snap", "position": "diagonal"}),
     ]
 
     for tool, params in enum_cases:
@@ -202,6 +206,7 @@ def test_unexpected_parameters_rejected_when_disallowed():
         ("personalization", {"feature": "theme", "mode": "dark", "extra": "unsupported"}),
         ("bluetooth", {"action": "enable", "device": "headphones"}),
         ("wifi", {"action": "disable", "adapter": "wlan0"}),
+        ("window", {"action": "minimize", "force": True}),
         ("open_folder", {"path": "C:\\", "extra": "unsupported"}),
         ("find_file", {"pattern": "*.txt", "recursive": True}),
     ]
@@ -246,6 +251,9 @@ def test_valid_parameters_pass_validation():
         ExecutionPlan(steps=[PlanStep(id="s23", tool="web_search", parameters={"query": "python"})]),
         ExecutionPlan(steps=[PlanStep(id="s24", tool="open_browser", parameters={"browser": "chrome", "url": "https://example.com"})]),
         ExecutionPlan(steps=[PlanStep(id="s25", tool="network", parameters={"action": "status"})]),
+        ExecutionPlan(steps=[PlanStep(id="s26", tool="window", parameters={"action": "minimize", "target": "chrome"})]),
+        ExecutionPlan(steps=[PlanStep(id="s27", tool="window", parameters={"action": "snap", "position": "left"})]),
+        ExecutionPlan(steps=[PlanStep(id="s28", tool="window", parameters={"action": "show_desktop"})]),
     ]
 
     for plan in valid_plans:
@@ -266,7 +274,7 @@ def test_registry_exports_all_canonical_schemas():
         "open_application", "close_application", "open_browser", "web_search",
         "open_folder", "find_file", "media_control", "play_media",
         "bluetooth", "set_brightness", "lock", "restart",
-        "open_settings", "personalization", "shutdown", "sleep", "set_volume", "wifi",
+        "open_settings", "personalization", "shutdown", "sleep", "set_volume", "wifi", "window",
     }
 
     exported_tools = set(tool_names)

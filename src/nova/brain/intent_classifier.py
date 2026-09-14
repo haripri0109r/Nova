@@ -505,6 +505,113 @@ class PlaceholderIntentClassifier(BaseIntentClassifier):
                 entities["raw_input"] = text
                 conf = 0.5
 
+        # 7.8 Windows Window & Desktop Management (Phase 5.8-E)
+        elif (
+            text in ("minimize all", "minimize all windows", "minimize everything", "show desktop", "show the desktop")
+            or text in ("restore all", "restore all windows", "unminimize all")
+            or text.startswith("snap ")
+            or text.startswith("switch to ")
+            or text.startswith("bring ")
+            or any(text.startswith(p) for p in ("focus ", "focus on "))
+            or any(text.startswith(p) for p in ("minimize ", "maximize ", "restore "))
+            or text in ("minimize", "maximize", "restore", "show desktop", "restore all")
+            or any(k in text for k in ("what windows are open", "list open windows", "list windows", "show open windows", "which windows are open", "what window is this", "what is the current window", "what is the active window", "current window", "active window", "what window is active"))
+            or re.search(r"\bclose\s+(?:the\s+|this\s+)?window\b", text)
+            or re.search(r"\bclose\s+(?:the\s+)?([a-zA-Z0-9_\-\. ]+?)\s+window\b", text)
+        ) and not any(k in text for k in ("search", "find", "google", "settings")) and not any(text.startswith(p) for p in ("open ", "launch ", "start ", "run ")):
+            cat = IntentCategory.WINDOW
+            conf = 0.95
+            is_compound = is_compound_command(text)
+            entities = {}
+
+            clean_text = text.rstrip("?!.,")
+
+            # 1. Desktop shell toggles
+            if clean_text in ("minimize all", "minimize all windows", "minimize everything", "show desktop", "show the desktop"):
+                entities = {"action": "show_desktop"}
+            elif clean_text in ("restore all", "restore all windows", "unminimize all"):
+                entities = {"action": "restore_all"}
+
+            # 2. Window list & active query
+            elif any(k in clean_text for k in ("what windows are open", "list open windows", "list windows", "show open windows", "which windows are open", "all open windows")):
+                entities = {"action": "list"}
+            elif any(k in clean_text for k in ("what window is this", "what is the current window", "what is the active window", "current window", "active window", "what window is active", "which window is active")):
+                entities = {"action": "get_active"}
+
+            # 3. Snap window
+            elif clean_text.startswith("snap ") or "snap" in clean_text:
+                m_snap = re.match(r"^snap(?:\s+(?:the|this))?(?:\s+window)?(?:\s+(.+?))?\s+(?:to\s+)?(?:the\s+)?(left|right|top|bottom|center)$", clean_text)
+                if m_snap:
+                    raw_target = (m_snap.group(1) or "").strip()
+                    pos = m_snap.group(2).strip()
+                    target = "active" if not raw_target or raw_target in ("this", "this window", "the window", "it", "current", "current window", "window") else raw_target
+                    entities = {"action": "snap", "position": pos, "target": target}
+                else:
+                    entities = {"action": "snap"}
+
+            # 4. Focus / Switch to window
+            elif clean_text.startswith("switch to ") or clean_text.startswith("bring ") or any(clean_text.startswith(p) for p in ("focus ", "focus on ")):
+                target = ""
+                m_switch = re.match(r"^switch\s+to\s+(?:the\s+)?(?:window\s+)?(.+?)(?:\s+window)?$", clean_text)
+                if m_switch:
+                    target = m_switch.group(1).strip()
+                else:
+                    m_bring = re.match(r"^bring\s+(?:the\s+)?(.+?)\s+(?:window\s+)?to\s+(?:the\s+)?front$", clean_text)
+                    if m_bring:
+                        target = m_bring.group(1).strip()
+                    else:
+                        m_focus = re.match(r"^focus(?:\s+on)?\s+(?:the\s+)?(?:window\s+)?(.+?)(?:\s+window)?$", clean_text)
+                        if m_focus:
+                            target = m_focus.group(1).strip()
+                if not target or target in ("this", "this window", "the window", "it", "current", "current window", "window"):
+                    target = "active"
+                entities = {"action": "focus", "target": target}
+
+            # 5. Minimize
+            elif clean_text.startswith("minimize"):
+                m_min = re.match(r"^minimize(?:\s+(?:the|this))?(?:\s+window)?(?:\s+(.+?))?(?:\s+window)?$", clean_text)
+                raw_target = (m_min.group(1) or "").strip() if m_min else ""
+                if raw_target in ("all", "all windows", "everything"):
+                    entities = {"action": "show_desktop"}
+                else:
+                    target = "active" if not raw_target or raw_target in ("this", "this window", "the window", "it", "current", "current window", "window") else raw_target
+                    entities = {"action": "minimize", "target": target}
+
+            # 6. Maximize
+            elif clean_text.startswith("maximize"):
+                m_max = re.match(r"^maximize(?:\s+(?:the|this))?(?:\s+window)?(?:\s+(.+?))?(?:\s+window)?$", clean_text)
+                raw_target = (m_max.group(1) or "").strip() if m_max else ""
+                target = "active" if not raw_target or raw_target in ("this", "this window", "the window", "it", "current", "current window", "window") else raw_target
+                entities = {"action": "maximize", "target": target}
+
+            # 7. Restore
+            elif clean_text.startswith("restore") or clean_text.startswith("unminimize"):
+                m_res = re.match(r"^(?:restore|unminimize)(?:\s+(?:the|this))?(?:\s+window)?(?:\s+(.+?))?(?:\s+window)?$", clean_text)
+                raw_target = (m_res.group(1) or "").strip() if m_res else ""
+                if raw_target in ("all", "all windows", "everything"):
+                    entities = {"action": "restore_all"}
+                else:
+                    target = "active" if not raw_target or raw_target in ("this", "this window", "the window", "it", "current", "current window", "window") else raw_target
+                    entities = {"action": "restore", "target": target}
+
+            # 8. Close window
+            elif "close" in clean_text and "window" in clean_text:
+                m_cw = re.match(r"^close\s+(?:the\s+|this\s+)?window$", clean_text)
+                if m_cw:
+                    entities = {"action": "close", "target": "active"}
+                else:
+                    m_caw = re.match(r"^close\s+(?:the\s+)?(.+?)\s+window$", clean_text)
+                    if m_caw:
+                        target = m_caw.group(1).strip()
+                        entities = {"action": "close", "target": target}
+                    else:
+                        entities = {"action": "close", "target": "active"}
+
+            if is_compound:
+                entities["is_compound"] = True
+                entities["raw_input"] = text
+                conf = 0.5
+
         # 8. Windows Settings Navigation
         elif (
             "settings" in text

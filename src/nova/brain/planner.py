@@ -147,6 +147,7 @@ Rules:
 - For personalization (theme, taskbar, wallpaper): use tool "personalization" with feature ("theme", "taskbar", or "wallpaper"). For theme use mode ("dark" or "light"). For taskbar use alignment ("left" or "center"). For wallpaper use path.
 - For display control (brightness, resolution, refresh rate, orientation, display info, night light): use tool "display" with action ("get_brightness", "set_brightness", "increase_brightness", "decrease_brightness", "get_display_info", "get_resolution", "set_resolution", "get_refresh_rate", "set_refresh_rate", "get_orientation", "set_orientation", "night_light"). Never use open_settings when asked to change or inspect display state directly.
 - For audio control (volume, mute, unmute, microphone, output devices, default device): use tool "audio" with action ("get_volume", "set_volume", "increase_volume", "decrease_volume", "mute", "unmute", "list_outputs", "list_inputs", "get_mic_status", "set_mic_volume", "mute_mic", "unmute_mic", "set_default_output"). Never use open_settings when asked to change or inspect audio state directly.
+- For Windows window and desktop management (minimize, maximize, restore, snap, focus, close, show desktop, list, get active window): use tool "window" with action ("show_desktop", "restore_all", "minimize", "maximize", "restore", "snap", "focus", "close", "list", "get_active"). For snap use position ("left", "right", "top", "bottom", "center"). Never use open_application for switching or focusing existing windows.
 - For ambiguous commands with unclear targets like "it" or "that": return {{"steps": [], "description": "Unsupported"}}.
 
 AVAILABLE TOOLS:
@@ -215,6 +216,7 @@ Rules:
 - For personalization (theme, taskbar, wallpaper): use tool "personalization" with feature ("theme", "taskbar", or "wallpaper"). For theme use mode ("dark" or "light"). For taskbar use alignment ("left" or "center"). For wallpaper use path.
 - For display control (brightness, resolution, refresh rate, orientation, display info, night light): use tool "display" with action ("get_brightness", "set_brightness", "increase_brightness", "decrease_brightness", "get_display_info", "get_resolution", "set_resolution", "get_refresh_rate", "set_refresh_rate", "get_orientation", "set_orientation", "night_light"). Never use open_settings when asked to change or inspect display state directly.
 - For audio control (volume, mute, unmute, microphone, output devices, default device): use tool "audio" with action ("get_volume", "set_volume", "increase_volume", "decrease_volume", "mute", "unmute", "list_outputs", "list_inputs", "get_mic_status", "set_mic_volume", "mute_mic", "unmute_mic", "set_default_output"). Never use open_settings when asked to change or inspect audio state directly.
+- For Windows window and desktop management (minimize, maximize, restore, snap, focus, close, show desktop, list, get active window): use tool "window" with action ("show_desktop", "restore_all", "minimize", "maximize", "restore", "snap", "focus", "close", "list", "get_active"). For snap use position ("left", "right", "top", "bottom", "center"). Never use open_application for switching or focusing existing windows.
 - For ambiguous commands with unclear targets like "it" or "that": return {{"steps": [], "description": "Unsupported"}}.
 
 AVAILABLE TOOLS:
@@ -394,6 +396,19 @@ JSON FORMAT:
                 return bool(path)
             return False
 
+        if intent_cat == "window":
+            action = (intent.entities or {}).get("action")
+            valid_actions = {
+                "show_desktop", "restore_all", "minimize", "maximize",
+                "restore", "snap", "focus", "close", "list", "get_active",
+            }
+            if not action or action not in valid_actions:
+                return False
+            if action == "snap":
+                pos = (intent.entities or {}).get("position")
+                return pos in ("left", "right", "top", "bottom", "center")
+            return True
+
         return False
 
     async def plan(
@@ -482,6 +497,16 @@ JSON FORMAT:
                 for k, v in params.items():
                     if k in ("action", "level", "amount", "device_name"):
                         valid_params[k] = v
+                params = valid_params
+            elif intent_tool == "window":
+                valid_params = {}
+                w_action = params.get("action", "")
+                if w_action:
+                    valid_params["action"] = w_action
+                if "target" in params and params["target"]:
+                    valid_params["target"] = params["target"]
+                if "position" in params and params["position"]:
+                    valid_params["position"] = params["position"]
                 params = valid_params
 
             plan = ExecutionPlan(

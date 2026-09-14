@@ -56,6 +56,9 @@ INTENT_ALIASES: Dict[str, str] = {
     "network_status": "network",
     "settings": "open_settings",
     "set_personalization": "personalization",
+    "window_control": "window",
+    "manage_window": "window",
+    "switch_window": "window",
 }
 
 
