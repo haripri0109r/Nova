@@ -726,10 +726,10 @@ class PlaceholderIntentClassifier(BaseIntentClassifier):
             entities = {"query": query} if query else {}
             conf = 0.85
 
-        # 11. Shutdown system - Must explicitly require pc/computer/system or clean standalone command
-        elif re.match(r"^(?:please\s+)?(?:shutdown|shut\s*down|power\s+off)(?:\s+(?:the\s+|my\s+)?(?:pc|computer|system))?$", text) or \
-             re.match(r"^(?:please\s+)?turn\s+off\s+(?:the\s+|my\s+)?(?:pc|computer|system)$", text) or \
-             text in ("shutdown", "shut down", "power off", "turn off the pc", "turn off the computer", "turn off my pc", "turn off my computer", "shutdown my pc", "shutdown the pc"):
+        # 11. Shutdown system - Must explicitly require pc/computer/system/laptop or clean standalone command
+        elif re.match(r"^(?:please\s+)?(?:shutdown|shut\s*down|power\s+off)(?:\s+(?:the\s+|my\s+)?(?:pc|computer|system|laptop))?$", text) or \
+             re.match(r"^(?:please\s+)?turn\s+off\s+(?:the\s+|my\s+)?(?:pc|computer|system|laptop)$", text) or \
+             text in ("shutdown", "shut down", "power off", "turn off the pc", "turn off the computer", "turn off my pc", "turn off my computer", "shutdown my pc", "shutdown the pc", "shutdown my laptop", "shut down my laptop", "turn off my laptop", "turn off the laptop"):
             cat = IntentCategory.SHUTDOWN
             conf = 0.95
             entities = {}

@@ -17,7 +17,7 @@ from .models import (
     PlanStep,
     IntentResult,
 )
-from .types import IntentCategory
+from .types import IntentCategory, ConfidenceLevel
 from .intent_classifier import (
     BaseIntentClassifier,
     create_intent_classifier,
@@ -159,6 +159,82 @@ class BrainEngine:
                 timestamp=datetime.utcnow(),
             )
 
+        # 🛡️ Shutdown precondition and stateful workflow handling
+        session = session_id or "default"
+        from nova.brain.shutdown_workflow import (
+            get_shutdown_workflow_manager,
+            is_cancellation_phrase,
+            is_continuation_phrase,
+        )
+        from nova.skills.system.app_detector import (
+            check_shutdown_precondition,
+            format_initial_blocked_message,
+            format_still_open_message,
+        )
+
+        wf_mgr = get_shutdown_workflow_manager()
+
+        if wf_mgr.is_pending(session):
+            if is_cancellation_phrase(text):
+                wf_mgr.clear_pending(session)
+                elapsed_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
+                return BrainResponse(
+                    intent=intent,
+                    plan=ExecutionPlan(steps=[], description="Shutdown cancelled"),
+                    routing=RoutingDecision(target="brain_engine", reason="Shutdown cancelled by user"),
+                    response_text="Okay, I won't shut down.",
+                    timestamp=datetime.utcnow(),
+                    processing_time_ms=elapsed_ms,
+                    metadata={"success": True, "cancelled": True},
+                )
+            elif is_continuation_phrase(text) or intent.category == IntentCategory.SHUTDOWN:
+                # Mandatory second check of real Windows application state
+                precond = check_shutdown_precondition()
+                if not precond["ready"]:
+                    wf_mgr.update_pending(session, precond["open_applications"])
+                    elapsed_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
+                    msg = format_still_open_message(precond["open_applications"])
+                    return BrainResponse(
+                        intent=intent,
+                        plan=ExecutionPlan(steps=[], description="Shutdown precondition blocked"),
+                        routing=RoutingDecision(target="brain_engine", reason="Open applications remain"),
+                        response_text=msg,
+                        timestamp=datetime.utcnow(),
+                        processing_time_ms=elapsed_ms,
+                        metadata={"success": False, "open_applications": precond["open_applications"]},
+                    )
+                else:
+                    # All user applications are closed. Clear workflow state and proceed to standard shutdown flow.
+                    wf_mgr.clear_pending(session)
+                    text = "shutdown"
+                    intent = IntentResult(
+                        category=IntentCategory.SHUTDOWN,
+                        confidence=0.95,
+                        confidence_level=ConfidenceLevel.HIGH,
+                        entities={},
+                        raw_scores={IntentCategory.SHUTDOWN.value: 0.95},
+                    )
+            else:
+                # User asked an unrelated request; clear pending shutdown so it doesn't hijack future requests
+                wf_mgr.clear_pending(session)
+
+        elif intent.category == IntentCategory.SHUTDOWN:
+            # Initial shutdown request: inspect currently open user applications
+            precond = check_shutdown_precondition()
+            if not precond["ready"]:
+                wf_mgr.set_pending(session, precond["open_applications"])
+                elapsed_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
+                msg = format_initial_blocked_message(precond["open_applications"])
+                return BrainResponse(
+                    intent=intent,
+                    plan=ExecutionPlan(steps=[], description="Shutdown precondition blocked"),
+                    routing=RoutingDecision(target="brain_engine", reason="Open applications detected"),
+                    response_text=msg,
+                    timestamp=datetime.utcnow(),
+                    processing_time_ms=elapsed_ms,
+                    metadata={"success": False, "open_applications": precond["open_applications"]},
+                )
+
         # 3️⃣ Generate multi-step plan using Planner
         planner = get_planner()
         await planner.initialize()
@@ -243,6 +319,8 @@ class BrainEngine:
     def _compose_multi_step_response(self, execution_result: "ExecutionResult") -> str:
         """Compose response from multi-step execution result."""
         if not execution_result.success:
+            if execution_result.message and execution_result.message.startswith("Confirmation required"):
+                return execution_result.message
             return f"Sorry, I couldn't complete that. {execution_result.message}"
         
         # Collect all skill details from successful steps
