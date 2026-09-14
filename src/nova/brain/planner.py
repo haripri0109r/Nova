@@ -339,15 +339,25 @@ JSON FORMAT:
 
         if intent_cat == "bluetooth":
             action = (intent.entities or {}).get("action")
-            if action not in ("enable", "disable"):
-                return False
-            return True
+            return action in ("enable", "disable", "status")
 
         if intent_cat == "wifi":
             action = (intent.entities or {}).get("action")
-            if action not in ("enable", "disable"):
-                return False
-            return True
+            if action in ("enable", "disable", "status"):
+                return True
+            if action == "connect":
+                ssid = (intent.entities or {}).get("ssid", "").strip()
+                return bool(ssid)
+            return False
+
+        if intent_cat == "network":
+            action = (intent.entities or {}).get("action")
+            if action in ("status", "dns", "interfaces"):
+                return True
+            if action == "ping":
+                host = (intent.entities or {}).get("host", "").strip()
+                return bool(host)
+            return False
 
         if intent_cat == "lock":
             return True
@@ -420,8 +430,24 @@ JSON FORMAT:
             params = dict(intent.entities or {})
             if intent_tool in ("lock", "sleep", "shutdown", "restart"):
                 params = {}
-            elif intent_tool in ("bluetooth", "wifi"):
-                params = {"action": params.get("action", "enable")}
+            elif intent_tool == "bluetooth":
+                params = {"action": params.get("action", "status")}
+            elif intent_tool == "wifi":
+                w_action = params.get("action", "status")
+                if w_action == "connect":
+                    params = {"action": "connect", "ssid": params.get("ssid", "")}
+                else:
+                    params = {"action": w_action}
+            elif intent_tool == "network":
+                n_action = params.get("action", "status")
+                if n_action == "ping":
+                    params = {
+                        "action": "ping",
+                        "host": params.get("host", "8.8.8.8"),
+                        "count": int(params.get("count", 4)),
+                    }
+                else:
+                    params = {"action": n_action}
             elif intent_tool in ("open_application", "close_application"):
                 params = {"application": params.get("application", "")}
             elif intent_tool == "find_file":

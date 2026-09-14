@@ -411,22 +411,68 @@ class PlaceholderIntentClassifier(BaseIntentClassifier):
         elif any(k in text for k in ("bluetooth", "blue tooth")) and "settings" not in text:
             cat = IntentCategory.BLUETOOTH
             conf = 0.95
-            if any(k in text for k in ("off", "disable", "disconnect")):
+            is_compound = is_compound_command(text)
+            if any(k in text for k in ("status", "check", "state", "is bluetooth", "what is bluetooth")):
+                entities = {"action": "status"}
+            elif any(k in text for k in ("off", "disable", "turn off")):
                 entities = {"action": "disable"}
-            elif any(k in text for k in ("on", "enable", "connect", "toggle on")):
+            elif any(k in text for k in ("on", "enable", "turn on", "toggle on")):
                 entities = {"action": "enable"}
             else:
+                entities = {"action": "status"}
+
+            if is_compound:
+                entities["is_compound"] = True
+                entities["raw_input"] = text
                 conf = 0.5
 
         # 6. Wi-Fi control
         elif any(k in text for k in ("wifi", "wi-fi", "wireless")) and "settings" not in text:
             cat = IntentCategory.WIFI
             conf = 0.95
-            if any(k in text for k in ("off", "disable", "disconnect")):
+            is_compound = is_compound_command(text)
+            m_connect = re.search(r"connect(?:\s+to)?\s+(?:wifi\s+|network\s+)?([a-zA-Z0-9_\-\.\@\!#]+)", text)
+            if any(k in text for k in ("connect to", "connect wifi", "join network")) or (m_connect and "connect" in text and not any(k in text for k in ("disconnect", "turn off", "disable"))):
+                ssid_target = m_connect.group(1).strip() if m_connect else ""
+                entities = {"action": "connect", "ssid": ssid_target}
+            elif any(k in text for k in ("status", "check", "state", "connected to", "which wifi", "current wifi", "is wifi")):
+                entities = {"action": "status"}
+            elif any(k in text for k in ("off", "disable", "turn off", "disconnect")):
                 entities = {"action": "disable"}
-            elif any(k in text for k in ("on", "enable", "connect", "toggle on")):
+            elif any(k in text for k in ("on", "enable", "turn on", "toggle on")):
                 entities = {"action": "enable"}
             else:
+                entities = {"action": "status"}
+
+            if is_compound:
+                entities["is_compound"] = True
+                entities["raw_input"] = text
+                conf = 0.5
+
+        # 6.5 Network diagnostics & status
+        elif (
+            any(k in text for k in ("network", "internet", "ping", "ip address", "dns server", "my ip"))
+            or ("ip" in text and any(k in text for k in ("what is", "check", "get", "show")))
+        ) and "settings" not in text and not any(text.startswith(p) for p in ("find ", "search ", "locate ", "open ", "launch ")):
+            cat = IntentCategory.NETWORK
+            conf = 0.95
+            is_compound = is_compound_command(text)
+            if "ping" in text:
+                m_ping = re.search(r"ping\s+([A-Za-z0-9\.\-]+)", text)
+                target_host = m_ping.group(1).strip() if m_ping else "8.8.8.8"
+                m_cnt = re.search(r"(?:-n|count|\*)\s*(\d+)", text)
+                cnt = int(m_cnt.group(1)) if m_cnt else 4
+                entities = {"action": "ping", "host": target_host, "count": cnt}
+            elif any(k in text for k in ("dns", "dns servers")):
+                entities = {"action": "dns"}
+            elif any(k in text for k in ("interfaces", "adapters", "network cards")):
+                entities = {"action": "interfaces"}
+            else:
+                entities = {"action": "status"}
+
+            if is_compound:
+                entities["is_compound"] = True
+                entities["raw_input"] = text
                 conf = 0.5
 
         # 7. Personalization (Theme mode, Taskbar alignment, Wallpaper)
