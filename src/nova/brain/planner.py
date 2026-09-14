@@ -145,6 +145,8 @@ Rules:
 - For web search or browsing queries: use tool "web_search" with query.
 - For opening settings pages: use tool "open_settings" with page (e.g. "display", "wifi", "sound", "default_apps"). Never use open_application for settings.
 - For personalization (theme, taskbar, wallpaper): use tool "personalization" with feature ("theme", "taskbar", or "wallpaper"). For theme use mode ("dark" or "light"). For taskbar use alignment ("left" or "center"). For wallpaper use path.
+- For display control (brightness, resolution, refresh rate, orientation, display info, night light): use tool "display" with action ("get_brightness", "set_brightness", "increase_brightness", "decrease_brightness", "get_display_info", "get_resolution", "set_resolution", "get_refresh_rate", "set_refresh_rate", "get_orientation", "set_orientation", "night_light"). Never use open_settings when asked to change or inspect display state directly.
+- For audio control (volume, mute, unmute, microphone, output devices, default device): use tool "audio" with action ("get_volume", "set_volume", "increase_volume", "decrease_volume", "mute", "unmute", "list_outputs", "list_inputs", "get_mic_status", "set_mic_volume", "mute_mic", "unmute_mic", "set_default_output"). Never use open_settings when asked to change or inspect audio state directly.
 - For ambiguous commands with unclear targets like "it" or "that": return {{"steps": [], "description": "Unsupported"}}.
 
 AVAILABLE TOOLS:
@@ -211,6 +213,8 @@ Rules:
 - For web search or browsing queries: use tool "web_search" with query.
 - For opening settings pages: use tool "open_settings" with page (e.g. "display", "wifi", "sound", "default_apps"). Never use open_application for settings.
 - For personalization (theme, taskbar, wallpaper): use tool "personalization" with feature ("theme", "taskbar", or "wallpaper"). For theme use mode ("dark" or "light"). For taskbar use alignment ("left" or "center"). For wallpaper use path.
+- For display control (brightness, resolution, refresh rate, orientation, display info, night light): use tool "display" with action ("get_brightness", "set_brightness", "increase_brightness", "decrease_brightness", "get_display_info", "get_resolution", "set_resolution", "get_refresh_rate", "set_refresh_rate", "get_orientation", "set_orientation", "night_light"). Never use open_settings when asked to change or inspect display state directly.
+- For audio control (volume, mute, unmute, microphone, output devices, default device): use tool "audio" with action ("get_volume", "set_volume", "increase_volume", "decrease_volume", "mute", "unmute", "list_outputs", "list_inputs", "get_mic_status", "set_mic_volume", "mute_mic", "unmute_mic", "set_default_output"). Never use open_settings when asked to change or inspect audio state directly.
 - For ambiguous commands with unclear targets like "it" or "that": return {{"steps": [], "description": "Unsupported"}}.
 
 AVAILABLE TOOLS:
@@ -306,6 +310,30 @@ JSON FORMAT:
         if intent_cat == "set_brightness":
             action = (intent.entities or {}).get("action")
             if not action or action not in ("set", "increase", "decrease"):
+                return False
+            return True
+
+        if intent_cat == "display":
+            action = (intent.entities or {}).get("action")
+            valid_actions = {
+                "get_brightness", "set_brightness", "increase_brightness", "decrease_brightness",
+                "get_display_info", "get_resolution", "set_resolution",
+                "get_refresh_rate", "set_refresh_rate",
+                "get_orientation", "set_orientation", "night_light",
+            }
+            if not action or action not in valid_actions:
+                return False
+            return True
+
+        if intent_cat == "audio":
+            action = (intent.entities or {}).get("action")
+            valid_actions = {
+                "get_volume", "set_volume", "increase_volume", "decrease_volume",
+                "mute", "unmute", "list_outputs", "list_inputs",
+                "get_mic_status", "set_mic_volume", "mute_mic", "unmute_mic",
+                "set_default_output",
+            }
+            if not action or action not in valid_actions:
                 return False
             return True
 
@@ -417,6 +445,18 @@ JSON FORMAT:
                     params = {"action": "set", "level": int(params.get("level", 50))}
                 else:
                     params = {"action": b_action, "amount": int(params.get("amount", 10))}
+            elif intent_tool == "display":
+                valid_params = {}
+                for k, v in params.items():
+                    if k in ("action", "level", "amount", "width", "height", "refresh_rate", "orientation"):
+                        valid_params[k] = v
+                params = valid_params
+            elif intent_tool == "audio":
+                valid_params = {}
+                for k, v in params.items():
+                    if k in ("action", "level", "amount", "device_name"):
+                        valid_params[k] = v
+                params = valid_params
 
             plan = ExecutionPlan(
                 steps=[

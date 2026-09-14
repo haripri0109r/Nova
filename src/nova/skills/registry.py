@@ -1,5 +1,5 @@
 """
-Skill registry – automatically discovers and stores all concrete BaseSkill subclasses.
+Skill registry â€“ automatically discovers and stores all concrete BaseSkill subclasses.
 """
 
 import logging
@@ -50,6 +50,8 @@ INTENT_ALIASES: Dict[str, str] = {
     "wifi_control": "wifi",
     "volume_control": "set_volume",
     "brightness_control": "set_brightness",
+    "display_control": "display",
+    "audio_control": "audio",
     "settings": "open_settings",
     "set_personalization": "personalization",
 }

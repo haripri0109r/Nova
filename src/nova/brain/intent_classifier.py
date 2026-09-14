@@ -261,42 +261,151 @@ class PlaceholderIntentClassifier(BaseIntentClassifier):
             entities = {}
 
         # 2. Screen reading
-        elif any(k in text for k in ("what's on", "what is on", "read my screen", "read screen")) or text == "screen" or ("screen" in text and not any(k in text for k in ("lock", "dim", "brighten"))):
+        elif (any(k in text for k in ("what's on", "what is on", "read my screen", "read screen")) or text == "screen") and not any(k in text for k in ("resolution", "refresh", "orientation", "brightness", "dim", "brighten", "lock")):
             cat = IntentCategory.SCREEN_READ
             conf = 0.9
 
-        # 3. Volume control
-        elif any(k in text for k in ("volume", "sound", "mute", "unmute")) and "settings" not in text:
+        # 3. Audio - Microphone and device control
+        elif (
+            any(k in text for k in ("microphone", "mic", "speakers", "audio devices", "output devices", "input devices", "headphones"))
+        ) and "settings" not in text and not any(text.startswith(p) for p in ("find ", "search ", "locate ", "open ", "launch ", "run ")):
+            cat = IntentCategory.AUDIO
+            conf = 0.95
+            is_compound = is_compound_command(text)
+
+            if any(k in text for k in ("mute microphone", "mute mic")):
+                entities = {"action": "mute_mic"}
+            elif any(k in text for k in ("unmute microphone", "unmute mic")):
+                entities = {"action": "unmute_mic"}
+            elif any(k in text for k in ("list microphones", "what microphone", "which microphone", "input devices", "list inputs", "what input")):
+                entities = {"action": "list_inputs"}
+            elif any(k in text for k in ("list speakers", "list audio", "what speakers", "output devices", "list outputs", "what output")):
+                entities = {"action": "list_outputs"}
+            elif any(k in text for k in ("mic volume", "microphone volume")):
+                m = re.search(r"(\d+)", text)
+                if m and any(k in text for k in ("set", "to", "at", "%", "percent")):
+                    entities = {"action": "set_mic_volume", "level": int(m.group(1))}
+                else:
+                    entities = {"action": "get_mic_status"}
+            elif any(k in text for k in ("switch to", "make", "set output to", "change output to", "default output")):
+                # Extract target device name
+                m_dev = re.search(r"(?:switch to|make|set output to|change output to)\s+(.+?)(?:\s+(?:as\s+)?default)?$", text)
+                dev_target = m_dev.group(1).strip() if m_dev else "speakers"
+                entities = {"action": "set_default_output", "device_name": dev_target}
+            else:
+                entities = {"action": "get_mic_status"}
+
+            if is_compound:
+                entities["is_compound"] = True
+                entities["raw_input"] = text
+                conf = 0.5
+
+        # 4. Volume control
+        elif (
+            any(k in text for k in ("volume", "mute", "unmute", "louder", "quieter"))
+            or ("sound" in text and not any(text.startswith(p) for p in ("open ", "launch ", "start ", "run ", "find ", "search ", "locate ")))
+        ) and "settings" not in text and not any(text.startswith(p) for p in ("find ", "search ", "locate ")):
             cat = IntentCategory.SET_VOLUME
             conf = 0.9
-            if "mute" in text and "unmute" not in text:
+            is_compound = is_compound_command(text)
+
+            if any(k in text for k in ("what's my volume", "what is my volume", "current volume", "check volume", "what is the volume")):
+                entities["action"] = "get_volume"
+            elif "mute" in text and "unmute" not in text:
                 entities["action"] = "mute"
             elif "unmute" in text:
                 entities["action"] = "unmute"
-            elif any(k in text for k in ("decrease", "lower", "reduce", "down")):
+            elif any(k in text for k in ("decrease", "lower", "reduce", "down", "quieter")):
                 entities["action"] = "decrease"
                 m = re.search(r"(\d+)", text)
                 entities["amount"] = int(m.group(1)) if m else 10
-            elif any(k in text for k in ("increase", "raise", "up")):
+            elif any(k in text for k in ("increase", "raise", "up", "louder")):
                 entities["action"] = "increase"
                 m = re.search(r"(\d+)", text)
                 entities["amount"] = int(m.group(1)) if m else 10
             else:
-                entities["action"] = "set"
                 m = re.search(r"(\d+)", text)
-                entities["level"] = int(m.group(1)) if m else 50
+                if m:
+                    entities["action"] = "set"
+                    entities["level"] = int(m.group(1))
+                else:
+                    entities["action"] = "get_volume"
 
-        # 4. Brightness control
-        elif any(k in text for k in ("brightness", "dim screen", "brighten screen")) and "settings" not in text:
+            if is_compound:
+                entities["is_compound"] = True
+                entities["raw_input"] = text
+                conf = 0.5
+
+        # 5. Display - Resolution, Refresh rate, Orientation, Display info, Night Light
+        elif (
+            any(k in text for k in ("resolution", "refresh rate", "orientation", "display info", "how many monitors", "monitors do i have", "night light", "rotate screen", "portrait", "landscape"))
+            or ("display" in text and any(k in text for k in ("info", "information", "count", "monitors", "primary")))
+        ) and "settings" not in text and not any(text.startswith(p) for p in ("find ", "search ", "locate ")):
+            cat = IntentCategory.DISPLAY
+            conf = 0.95
+            is_compound = is_compound_command(text)
+
+            if "night light" in text:
+                entities = {"action": "night_light"}
+            elif "resolution" in text:
+                m_res = re.search(r"(\d{3,4})\s*(?:by|x|\*)\s*(\d{3,4})", text)
+                if m_res and any(k in text for k in ("set", "change", "to")):
+                    entities = {
+                        "action": "set_resolution",
+                        "width": int(m_res.group(1)),
+                        "height": int(m_res.group(2)),
+                    }
+                else:
+                    entities = {"action": "get_resolution"}
+            elif "refresh rate" in text or "refresh" in text:
+                m_hz = re.search(r"(\d{2,3})\s*(?:hz|hertz)?", text)
+                if m_hz and any(k in text for k in ("set", "change", "to")):
+                    entities = {"action": "set_refresh_rate", "refresh_rate": int(m_hz.group(1))}
+                else:
+                    entities = {"action": "get_refresh_rate"}
+            elif "orientation" in text or any(k in text for k in ("portrait", "landscape", "rotate screen")):
+                m_orient = re.search(r"(landscape_flipped|portrait_flipped|landscape|portrait)", text)
+                if m_orient and any(k in text for k in ("set", "change", "rotate", "to")):
+                    entities = {"action": "set_orientation", "orientation": m_orient.group(1)}
+                elif m_orient:
+                    entities = {"action": "set_orientation", "orientation": m_orient.group(1)}
+                else:
+                    entities = {"action": "get_orientation"}
+            else:
+                entities = {"action": "get_display_info"}
+
+            if is_compound:
+                entities["is_compound"] = True
+                entities["raw_input"] = text
+                conf = 0.5
+
+        # 6. Brightness control
+        elif any(k in text for k in ("brightness", "dim screen", "brighten screen", "brighter", "dimmer")) and "settings" not in text:
             cat = IntentCategory.SET_BRIGHTNESS
             conf = 0.95
-            if any(k in text for k in ("decrease", "lower", "reduce", "down", "dim")):
-                entities = {"action": "decrease", "amount": 10}
-            elif any(k in text for k in ("increase", "raise", "up", "brighten")):
-                entities = {"action": "increase", "amount": 10}
+            is_compound = is_compound_command(text)
+
+            if any(k in text for k in ("what's my brightness", "what is my brightness", "current brightness", "check brightness", "what is the brightness")):
+                entities = {"action": "get_brightness"}
+            elif any(k in text for k in ("decrease", "lower", "reduce", "down", "dim", "dimmer")):
+                m = re.search(r"(\d+)", text)
+                amt = int(m.group(1)) if m else 10
+                entities = {"action": "decrease", "amount": amt}
+            elif any(k in text for k in ("increase", "raise", "up", "brighten", "brighter")):
+                m = re.search(r"(\d+)", text)
+                amt = int(m.group(1)) if m else 10
+                entities = {"action": "increase", "amount": amt}
             else:
                 m = re.search(r"(\d+)", text)
-                entities = {"action": "set", "level": int(m.group(1)) if m else 50}
+                if m:
+                    entities = {"action": "set", "level": int(m.group(1))}
+                else:
+                    entities = {"action": "get_brightness"}
+
+            if is_compound:
+                entities["is_compound"] = True
+                entities["raw_input"] = text
+                conf = 0.5
 
         # 5. Bluetooth control
         elif any(k in text for k in ("bluetooth", "blue tooth")) and "settings" not in text:

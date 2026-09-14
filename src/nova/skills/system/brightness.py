@@ -69,49 +69,55 @@ def _set_brightness(level: int) -> bool:
         return False
 
 
+def _parse_step_amount(amount: Any, default: int = 10) -> int:
+    if amount is None:
+        return default
+    step_map = {"small": 10, "medium": 20, "large": 30}
+    if isinstance(amount, str):
+        lower = amount.lower().strip()
+        if lower in step_map:
+            return step_map[lower]
+        try:
+            return int(lower)
+        except ValueError:
+            return default
+    elif isinstance(amount, (int, float)):
+        return int(amount)
+    return default
+
+
 class BrightnessSkill(BaseSkill):
     intent = "set_brightness"
     description = "Control screen brightness (set, increase, decrease)."
+
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["set", "increase", "decrease"],
+                "description": "Brightness action ('set', 'increase', 'decrease').",
+            },
+            "level": {
+                "type": "integer",
+                "description": "Target brightness level (0 to 100) when action is 'set'.",
+            },
+            "amount": {
+                "type": ["integer", "string"],
+                "description": "Brightness change amount when action is 'increase' or 'decrease'.",
+            },
+        },
+        "required": ["action"],
+        "additionalProperties": False,
+    }
 
     def can_handle(self, intent_data: Dict[str, Any]) -> bool:
         return intent_data.get("intent") == "set_brightness"
 
     def execute(self, intent_data: Dict[str, Any]) -> Dict[str, Any]:
-        action = intent_data.get("action")
-        amount = intent_data.get("amount")
-        level = intent_data.get("level")
-
-        try:
-            if action == "set":
-                if level is None:
-                    return {"status": "error", "message": "Missing level for set action"}
-                level = max(0, min(100, int(level)))
-                ok = _set_brightness(level)
-                if ok:
-                    logger.info("Brightness set to %d%%", level)
-                    return {"status": "ok", "detail": f"Brightness set to {level}%"}
-                else:
-                    return {"status": "error", "message": "Failed to set brightness"}
-
-            elif action in ("increase", "decrease"):
-                step_map = {"small": 10, "medium": 20, "large": 30}
-                step = step_map.get(amount, 10)
-                if action == "decrease":
-                    step = -step
-                new_level = _adjust_brightness(step)
-                if new_level is not None:
-                    logger.info("Brightness %s by %d%% (now %d%%)", action, abs(step), new_level)
-                    return {"status": "ok", "detail": f"Brightness {action}d to {new_level}%"}
-                else:
-                    return {"status": "error", "message": "Failed to adjust brightness"}
-
-            else:
-                logger.warning("Unknown brightness action: %s", action)
-                return {"status": "error", "message": f"Unknown brightness action {action}"}
-
-        except Exception:
-            logger.exception("BrightnessSkill failed")
-            return {"status": "error", "message": "Brightness control failed"}
+        from .display import DisplaySkill
+        skill = DisplaySkill()
+        return skill.execute(intent_data)
 
 
 registry.register(BrightnessSkill())

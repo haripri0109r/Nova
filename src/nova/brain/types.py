@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 
 class IntentCategory(str, Enum):
-    """High‑level intent categories."""
+    """Highâ€‘level intent categories."""
     OPEN_APPLICATION = "open_application"
     CLOSE_APPLICATION = "close_application"
     OPEN_BROWSER = "open_browser"
@@ -30,6 +30,8 @@ class IntentCategory(str, Enum):
     TASK_QUERY = "task_query"
     OPEN_SETTINGS = "open_settings"
     PERSONALIZATION = "personalization"
+    DISPLAY = "display"
+    AUDIO = "audio"
     UNKNOWN = "unknown"
 
 
@@ -47,7 +49,7 @@ class ExecutionMode(str, Enum):
 
 
 class BrainConfig(BaseModel):
-    """Top‑level configuration for the Brain Engine."""
+    """Topâ€‘level configuration for the Brain Engine."""
     intent_classifier: "IntentClassifierConfig" = Field(default_factory=lambda: IntentClassifierConfig())
     planner: "PlannerConfig" = Field(default_factory=lambda: PlannerConfig())
     router: "RouterConfig" = Field(default_factory=lambda: RouterConfig())

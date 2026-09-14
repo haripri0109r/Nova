@@ -34,51 +34,54 @@ def _get_audio_endpoint():
         return None
 
 
+def _parse_step_amount(amount: Any, default: int = 10) -> int:
+    if amount is None:
+        return default
+    step_map = {"small": 10, "medium": 20, "large": 30}
+    if isinstance(amount, str):
+        lower = amount.lower().strip()
+        if lower in step_map:
+            return step_map[lower]
+        try:
+            return int(lower)
+        except ValueError:
+            return default
+    elif isinstance(amount, (int, float)):
+        return int(amount)
+    return default
+
+
 class VolumeSkill(BaseSkill):
     intent = "set_volume"
-    description = "Control system volume (set, increase, decrease)."
+    description = "Control system volume (set, increase, decrease, mute, unmute)."
+
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["set", "increase", "decrease", "mute", "unmute"],
+                "description": "Volume action ('set', 'increase', 'decrease', 'mute', 'unmute').",
+            },
+            "level": {
+                "type": "integer",
+                "description": "Target volume level (0 to 100) when action is 'set'.",
+            },
+            "amount": {
+                "type": ["integer", "string"],
+                "description": "Volume change amount when action is 'increase' or 'decrease'.",
+            },
+        },
+        "required": ["action"],
+    }
 
     def can_handle(self, intent_data: Dict[str, Any]) -> bool:
         return intent_data.get("intent") == "set_volume"
 
     def execute(self, intent_data: Dict[str, Any]) -> Dict[str, Any]:
-        action = intent_data.get("action")
-        amount = intent_data.get("amount")
-        level = intent_data.get("level")
-
-        endpoint = _get_audio_endpoint()
-        if endpoint is None:
-            return {"status": "error", "message": "Audio endpoint not available"}
-
-        try:
-            if action == "set":
-                if level is None:
-                    return {"status": "error", "message": "Missing level for set action"}
-                level = max(0, min(100, int(level)))
-                endpoint.SetMasterVolumeLevelScalar(level / 100.0, None)
-                logger.info("Volume set to %d%%", level)
-                return {"status": "ok", "detail": f"Volume set to {level}%"}
-
-            elif action in ("increase", "decrease"):
-                step_map = {"small": 10, "medium": 20, "large": 30}
-                step = step_map.get(amount, 10)
-                if action == "decrease":
-                    step = -step
-                # Get current volume
-                current_scalar = endpoint.GetMasterVolumeLevelScalar()
-                current = int(round(current_scalar * 100))
-                target = max(0, min(100, current + step))
-                endpoint.SetMasterVolumeLevelScalar(target / 100.0, None)
-                logger.info("Volume %s by %d%% (now %d%%)", action, abs(step), target)
-                return {"status": "ok", "detail": f"Volume {action}d to {target}%"}
-
-            else:
-                logger.warning("Unknown volume action: %s", action)
-                return {"status": "error", "message": f"Unknown volume action {action}"}
-
-        except Exception:
-            logger.exception("VolumeSkill failed")
-            return {"status": "error", "message": "Volume control failed"}
+        from .audio import AudioSkill
+        skill = AudioSkill()
+        return skill.execute(intent_data)
 
 
 registry.register(VolumeSkill())
