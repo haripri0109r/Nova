@@ -141,6 +141,8 @@ Rules:
 - For Sleep: use tool "sleep" with parameters {{}}. Never use shutdown or restart.
 - For Shutdown/Restart: only use when explicitly requested to turn off or reboot the computer. Parameters must be {{}}. Never use reason or extra arguments.
 - For finding files or documents: use tool "find_file" with pattern.
+- For file and folder operations (list directory, file info, open file, create folder, create file, rename, copy, move, delete file): use tool "file_operation" with action ("list_directory", "get_file_info", "open_file", "create_folder", "create_file", "rename_file", "copy_file", "move_file", "delete_file"). Never use file_operation for open_folder or find_file. Never use overwrite=true.
+- For opening folders in Windows File Explorer: use tool "open_folder" with path.
 - Any request mentioning YouTube or Spotify: use tool "play_media" with query and app ("youtube" or "spotify"). Never use web_search if the user mentions YouTube or Spotify.
 - For web search or browsing queries: use tool "web_search" with query.
 - For opening settings pages: use tool "open_settings" with page (e.g. "display", "wifi", "sound", "default_apps"). Never use open_application for settings.
@@ -178,6 +180,15 @@ Plan: {{"steps": [{{"tool": "web_search", "parameters": {{"query": "news"}}, "de
 User: "find resume.pdf"
 Plan: {{"steps": [{{"tool": "find_file", "parameters": {{"pattern": "resume.pdf"}}, "depends_on": []}}], "description": "Find resume.pdf"}}
 
+User: "list files in c:\\projects"
+Plan: {{"steps": [{{"tool": "file_operation", "parameters": {{"action": "list_directory", "path": "c:\\projects"}}, "depends_on": []}}], "description": "List directory"}}
+
+User: "create folder reports"
+Plan: {{"steps": [{{"tool": "file_operation", "parameters": {{"action": "create_folder", "path": "reports"}}, "depends_on": []}}], "description": "Create folder"}}
+
+User: "delete file old_notes.txt"
+Plan: {{"steps": [{{"tool": "file_operation", "parameters": {{"action": "delete_file", "path": "old_notes.txt"}}, "depends_on": []}}], "description": "Delete file"}}
+
 User: "make me a sandwich"
 Plan: {{"steps": [], "description": "Unsupported"}}
 
@@ -210,6 +221,8 @@ Rules:
 - For Sleep: use tool "sleep" with parameters {{}}. Never use shutdown or restart.
 - For Shutdown/Restart: only use when explicitly requested to turn off or reboot the computer. Parameters must be {{}}. Never use reason or extra arguments.
 - For finding files or documents: use tool "find_file" with pattern.
+- For file and folder operations (list directory, file info, open file, create folder, create file, rename, copy, move, delete file): use tool "file_operation" with action ("list_directory", "get_file_info", "open_file", "create_folder", "create_file", "rename_file", "copy_file", "move_file", "delete_file"). Never use file_operation for open_folder or find_file. Never use overwrite=true.
+- For opening folders in Windows File Explorer: use tool "open_folder" with path.
 - Any request mentioning YouTube or Spotify: use tool "play_media" with query and app ("youtube" or "spotify"). Never use web_search if the user mentions YouTube or Spotify.
 - For web search or browsing queries: use tool "web_search" with query.
 - For opening settings pages: use tool "open_settings" with page (e.g. "display", "wifi", "sound", "default_apps"). Never use open_application for settings.
@@ -376,6 +389,30 @@ JSON FORMAT:
         if intent_cat in ("shutdown", "restart", "sleep"):
             return True
 
+        if intent_cat == "file_operation":
+            action = (intent.entities or {}).get("action")
+            valid_actions = {
+                "list_directory", "get_file_info", "open_file",
+                "create_folder", "create_file", "rename_file",
+                "copy_file", "move_file", "delete_file",
+            }
+            if not action or action not in valid_actions:
+                return False
+            entities = intent.entities or {}
+            if action in ("get_file_info", "open_file", "create_folder", "delete_file"):
+                p = entities.get("path")
+                return bool(p and isinstance(p, str) and p.strip())
+            if action == "create_file":
+                p = entities.get("path")
+                return bool(p and isinstance(p, str) and p.strip())
+            if action in ("rename_file", "copy_file", "move_file"):
+                src = entities.get("source")
+                dst = entities.get("destination")
+                return bool(src and dst and isinstance(src, str) and isinstance(dst, str) and src.strip() and dst.strip())
+            if action == "list_directory":
+                return True
+            return False
+
         if intent_cat == "open_settings":
             page = (intent.entities or {}).get("page", "").strip().lower()
             from nova.skills.system.settings import SETTINGS_URI_MAP, SETTINGS_ALIASES
@@ -467,6 +504,20 @@ JSON FORMAT:
                 params = {"application": params.get("application", "")}
             elif intent_tool == "find_file":
                 params = {"pattern": params.get("pattern", "")}
+            elif intent_tool == "file_operation":
+                valid_params = {}
+                f_action = params.get("action", "")
+                if f_action:
+                    valid_params["action"] = f_action
+                if "path" in params and params["path"]:
+                    valid_params["path"] = params["path"]
+                if "source" in params and params["source"]:
+                    valid_params["source"] = params["source"]
+                if "destination" in params and params["destination"]:
+                    valid_params["destination"] = params["destination"]
+                if "content" in params and params["content"] is not None:
+                    valid_params["content"] = str(params["content"])
+                params = valid_params
             elif intent_tool == "open_settings":
                 page = params.get("page", "")
                 from nova.skills.system.settings import resolve_settings_page

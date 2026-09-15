@@ -75,7 +75,11 @@ def classify_step_risk(tool: str, parameters: Optional[Dict] = None) -> str:
     tool_lower = (tool or "").lower().strip()
     if tool_lower in _HIGH_RISK_TOOLS:
         return RiskLevel.HIGH
-    # Additional parameter-based heuristics (future extensibility)
+    # Additional parameter-based heuristics
+    if tool_lower in ("file_operation", "file", "file_control"):
+        action = (parameters or {}).get("action", "").lower().strip() if isinstance(parameters, dict) else ""
+        if action == "delete_file":
+            return RiskLevel.HIGH
     return RiskLevel.LOW
 
 

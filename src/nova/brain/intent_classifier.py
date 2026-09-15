@@ -647,6 +647,76 @@ class PlaceholderIntentClassifier(BaseIntentClassifier):
                 entities["raw_input"] = text
                 conf = 0.5
 
+        # 8.5 File & Folder Operations (Phase 5.8-G)
+        elif (
+            (any(text.startswith(p) for p in ("list files", "list directory", "list folder", "show files", "show directory", "show contents of", "what files are in", "dir ")) or text in ("list files", "list directory", "dir"))
+            or re.match(r"^(?:file\s+details|file\s+info|get\s+(?:file\s+)?info|properties\s+of\s+file|how\s+big\s+is\s+file)\b", text)
+            or re.match(r"^(?:open|launch|view|read)\s+file\b", text)
+            or re.match(r"^(?:create|make|new)\s+(?:folder|directory)\b", text)
+            or re.match(r"^(?:create|make|new)\s+file\b", text)
+            or re.match(r"^rename\s+(?:file\s+)?(.+?)\s+to\s+", text)
+            or re.match(r"^copy\s+(?:file\s+)?(.+?)\s+to\s+", text)
+            or re.match(r"^move\s+(?:file\s+)?(.+?)\s+to\s+", text)
+            or re.match(r"^(?:delete|remove)\s+file\b", text)
+        ) and not any(k in text for k in ("web", "internet", "google", "youtube", "online")):
+            cat = IntentCategory.FILE_OPERATION
+            conf = 0.95
+            is_compound = is_compound_command(text)
+            entities = {}
+
+            # 1. Delete file
+            m_del = re.match(r"^(?:delete|remove)\s+file\s+(.+)$", text)
+            if m_del:
+                entities = {"action": "delete_file", "path": m_del.group(1).strip()}
+            # 2. Rename file
+            elif re.match(r"^rename\s+(?:file\s+)?(.+?)\s+to\s+(.+)$", text):
+                m_ren = re.match(r"^rename\s+(?:file\s+)?(.+?)\s+to\s+(.+)$", text)
+                entities = {"action": "rename_file", "source": m_ren.group(1).strip(), "destination": m_ren.group(2).strip()}
+            # 3. Copy file
+            elif re.match(r"^copy\s+(?:file\s+)?(.+?)\s+to\s+(.+)$", text):
+                m_cp = re.match(r"^copy\s+(?:file\s+)?(.+?)\s+to\s+(.+)$", text)
+                entities = {"action": "copy_file", "source": m_cp.group(1).strip(), "destination": m_cp.group(2).strip()}
+            # 4. Move file
+            elif re.match(r"^move\s+(?:file\s+)?(.+?)\s+to\s+(.+)$", text):
+                m_mv = re.match(r"^move\s+(?:file\s+)?(.+?)\s+to\s+(.+)$", text)
+                entities = {"action": "move_file", "source": m_mv.group(1).strip(), "destination": m_mv.group(2).strip()}
+            # 5. Create file
+            elif re.match(r"^(?:create|make|new)\s+file\s+(.+)$", text):
+                m_cf = re.match(r"^(?:create|make|new)\s+file\s+(.+)$", text)
+                raw_tail = m_cf.group(1).strip()
+                if " with content " in raw_tail:
+                    p, c = raw_tail.split(" with content ", 1)
+                    entities = {"action": "create_file", "path": p.strip(), "content": c.strip()}
+                    if " with content " in raw_text:
+                        _, orig_c = raw_text.split(" with content ", 1)
+                        entities["content"] = orig_c.strip()
+                else:
+                    entities = {"action": "create_file", "path": raw_tail}
+            # 6. Create folder
+            elif re.match(r"^(?:create|make|new)\s+(?:folder|directory)\s+(.+)$", text):
+                m_cfol = re.match(r"^(?:create|make|new)\s+(?:folder|directory)\s+(.+)$", text)
+                entities = {"action": "create_folder", "path": m_cfol.group(1).strip()}
+            # 7. Open file
+            elif re.match(r"^(?:open|launch|view|read)\s+file\s+(.+)$", text):
+                m_of = re.match(r"^(?:open|launch|view|read)\s+file\s+(.+)$", text)
+                entities = {"action": "open_file", "path": m_of.group(1).strip()}
+            # 8. File info / details
+            elif re.match(r"^(?:file\s+details\s+(?:for|of)|file\s+info\s+(?:for|of)|get\s+(?:file\s+)?info\s*(?:for|of|on)?|properties\s+of\s+file|how\s+big\s+is\s+file)\s*(.+)$", text):
+                m_fi = re.match(r"^(?:file\s+details\s+(?:for|of)|file\s+info\s+(?:for|of)|get\s+(?:file\s+)?info\s*(?:for|of|on)?|properties\s+of\s+file|how\s+big\s+is\s+file)\s*(.+)$", text)
+                entities = {"action": "get_file_info", "path": m_fi.group(1).strip()}
+            # 9. List directory
+            else:
+                m_ls = re.match(r"^(?:list\s+(?:files\s+in|directory|folder|contents\s+of)?|show\s+files\s+in|dir)\s*(.*)$", text)
+                p = m_ls.group(1).strip() if m_ls else ""
+                entities = {"action": "list_directory"}
+                if p:
+                    entities["path"] = p
+
+            if is_compound:
+                entities["is_compound"] = True
+                entities["raw_input"] = text
+                conf = 0.5
+
         # 9. Application / Browser Launching
         elif any(text.startswith(prefix) for prefix in ("open", "launch", "start", "run")) or text in ("notepad", "calculator", "terminal", "cmd", "powershell", "explorer", "chrome", "edge"):
             m = re.match(r"^(?:open|launch|start|run)\s*(.*)$", text)

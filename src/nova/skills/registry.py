@@ -59,6 +59,8 @@ INTENT_ALIASES: Dict[str, str] = {
     "window_control": "window",
     "manage_window": "window",
     "switch_window": "window",
+    "file": "file_operation",
+    "file_control": "file_operation",
 }
 
 

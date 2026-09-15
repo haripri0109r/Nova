@@ -14,9 +14,24 @@ from nova.skills.registry import registry
 logger = logging.getLogger("nova.skills.files.explorer")
 
 
+from .path_guard import PathGuard, OperationType, PathSecurityError
+
+
 class ExplorerSkill(BaseSkill):
     intent = "open_folder"
     description = "Open a folder in the system file explorer."
+
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Folder path to open in File Explorer.",
+            },
+        },
+        "required": ["path"],
+        "additionalProperties": False,
+    }
 
     def can_handle(self, intent_data: Dict[str, Any]) -> bool:
         return intent_data.get("intent") == "open_folder"
@@ -27,7 +42,14 @@ class ExplorerSkill(BaseSkill):
             logger.warning("ExplorerSkill called without path")
             return {"status": "error", "message": "Missing folder path"}
 
-        path = Path(path_str).expanduser().resolve()
+        try:
+            path = PathGuard.validate_safe_path(path_str, operation=OperationType.LIST)
+        except PathSecurityError as exc:
+            logger.warning("PathSecurityError in ExplorerSkill: %s", exc)
+            return {"status": "error", "message": f"Security violation: {exc}"}
+        except FileNotFoundError:
+            return {"status": "error", "message": f"Folder does not exist: {path_str}"}
+
         if not path.is_dir():
             logger.warning("Path not a directory: %s", path)
             return {"status": "error", "message": f"Not a directory: {path}"}
