@@ -34,6 +34,7 @@ class IntentCategory(str, Enum):
     AUDIO = "audio"
     NETWORK = "network"
     WINDOW = "window"
+    POWER = "power"
     UNKNOWN = "unknown"
 
 

@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 #: Tools classified as HIGH_RISK because an unknown second execution may cause
 #: destructive, irreversible, or idempotency-violating side effects.
 _HIGH_RISK_TOOLS: frozenset[str] = frozenset({
+    # System destructive / power
+    "shutdown",
+    "restart",
     # File-system destructive
     "delete_file",
     "remove_file",
@@ -76,6 +79,10 @@ def classify_step_risk(tool: str, parameters: Optional[Dict] = None) -> str:
     if tool_lower in _HIGH_RISK_TOOLS:
         return RiskLevel.HIGH
     # Additional parameter-based heuristics
+    if tool_lower == "power":
+        action = (parameters or {}).get("action", "").lower().strip() if isinstance(parameters, dict) else ""
+        if action == "hibernate":
+            return RiskLevel.HIGH
     if tool_lower in ("file_operation", "file", "file_control"):
         action = (parameters or {}).get("action", "").lower().strip() if isinstance(parameters, dict) else ""
         if action == "delete_file":

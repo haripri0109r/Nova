@@ -59,6 +59,9 @@ INTENT_ALIASES: Dict[str, str] = {
     "window_control": "window",
     "manage_window": "window",
     "switch_window": "window",
+    "power_control": "power",
+    "battery": "power",
+    "hibernate": "power",
     "file": "file_operation",
     "file_control": "file_operation",
 }

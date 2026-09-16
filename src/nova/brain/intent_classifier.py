@@ -518,7 +518,7 @@ class PlaceholderIntentClassifier(BaseIntentClassifier):
             or any(k in text for k in ("what windows are open", "list open windows", "list windows", "show open windows", "which windows are open", "what window is this", "what is the current window", "what is the active window", "current window", "active window", "what window is active"))
             or re.search(r"\bclose\s+(?:the\s+|this\s+)?window\b", text)
             or re.search(r"\bclose\s+(?:the\s+)?([a-zA-Z0-9_\-\. ]+?)\s+window\b", text)
-        ) and not any(k in text for k in ("search", "find", "google", "settings")) and not any(text.startswith(p) for p in ("open ", "launch ", "start ", "run ")):
+        ) and not any(k in text for k in ("search", "find", "google", "settings", "performance", "balanced", "power saver", "battery", "turbo", "silent", "power mode", "power plan")) and not any(text.startswith(p) for p in ("open ", "launch ", "start ", "run ")):
             cat = IntentCategory.WINDOW
             conf = 0.95
             is_compound = is_compound_command(text)
@@ -606,6 +606,110 @@ class PlaceholderIntentClassifier(BaseIntentClassifier):
                         entities = {"action": "close", "target": target}
                     else:
                         entities = {"action": "close", "target": "active"}
+
+            if is_compound:
+                entities["is_compound"] = True
+                entities["raw_input"] = text
+                conf = 0.5
+
+        # 8. Windows Settings Navigation
+        elif (
+            "settings" in text
+            or any(text.startswith(p) for p in ("open settings", "show settings", "launch settings", "view settings"))
+            or any(k in text for k in ("default apps", "startup apps", "default browser", "change default browser", "set default browser", "change my default browser"))
+            or text in ("settings", "windows settings")
+        ) and not any(k in text for k in ("search", "find", "google")):
+            cat = IntentCategory.OPEN_SETTINGS
+            conf = 0.95
+            is_compound = is_compound_command(text)
+
+            # Check protected browser change -> default_apps
+            if any(k in text for k in ("default browser", "change default browser", "set default browser", "change my default browser")):
+                entities = {"page": "default_apps"}
+            elif any(k in text for k in ("default apps", "default applications")):
+                entities = {"page": "default_apps"}
+            elif any(k in text for k in ("startup apps", "startup applications")):
+                entities = {"page": "startup_apps"}
+            else:
+                m_page = re.search(r"(?:open|show|display|launch|view)\s+(?:the\s+)?([a-z_ &]+?)\s+settings\b", text)
+                if m_page:
+                    extracted = m_page.group(1).strip()
+                    entities = {"page": extracted}
+                else:
+                    m_lead = re.match(r"^([a-z_ &]+?)\s+settings$", text)
+                    if m_lead:
+                        entities = {"page": m_lead.group(1).strip()}
+                    else:
+                        entities = {"page": "root"}
+
+            if is_compound:
+                entities["is_compound"] = True
+                entities["raw_input"] = text
+                conf = 0.5
+
+        # 7.9 Windows Power, Battery & Energy Management (Phase 5.8-F)
+        elif (
+            any(k in text for k in (
+                "battery", "battery level", "battery percentage", "how much juice", "how much battery",
+                "am i charging", "is my laptop charging", "is my pc charging", "is it charging",
+                "plugged in", "charger connected", "charger plugged in",
+                "power mode", "power plan", "power scheme",
+                "battery saver", "energy saver",
+                "display timeout", "screen timeout", "sleep timeout",
+                "hibernate", "hibernation",
+            ))
+            or (any(k in text for k in ("screen", "display", "monitor", "pc", "computer", "system")) and any(k in text for k in ("turn off", "sleep", "timeout", "turn-off")) and ("after" in text or "in " in text or "never" in text or "when" in text or any(c.isdigit() for c in text)))
+            or (any(k in text for k in ("switch to", "set to", "change to", "use", "put it on", "mode to", "plan to")) and any(k in text for k in ("balanced", "high performance", "performance", "power saver", "silent", "turbo")) and not any(k in text for k in ("window", "app", "tab")))
+        ) and "settings" not in text and not any(k in text for k in ("search", "find", "google", "web")) and not text in ("sleep", "go to sleep", "put computer to sleep", "put pc to sleep", "sleep pc", "sleep the computer", "sleep my pc", "put my pc to sleep", "shutdown", "shut down", "power off", "turn off the pc", "turn off the computer", "turn off my pc", "turn off my computer", "shutdown my pc", "shutdown the pc", "restart", "reboot"):
+            cat = IntentCategory.POWER
+            conf = 0.95
+            is_compound = is_compound_command(text)
+            entities = {}
+
+            # 1. Hibernation
+            if "hibernate" in text or "hibernation" in text:
+                entities = {"action": "hibernate"}
+            # 2. Battery Saver / Energy Saver
+            elif any(k in text for k in ("battery saver", "energy saver")):
+                entities = {"action": "get_battery_saver"}
+            # 3. Timeout Mutations
+            elif any(k in text for k in ("turn off", "sleep", "timeout")) and ("after" in text or "in " in text or "never" in text) and (any(c.isdigit() for c in text) or "never" in text):
+                target = "sleep" if (any(k in text for k in ("sleep", "computer", "pc")) and not any(k in text for k in ("screen", "display", "monitor"))) else "display"
+                if "never" in text:
+                    minutes = 0
+                else:
+                    m_min = re.search(r"(\d+)\s*(?:m|min|minute|minutes)?", text)
+                    minutes = int(m_min.group(1)) if m_min else 10
+                entities = {"action": "set_timeout", "target": target, "minutes": minutes}
+            # 4. Timeout Queries
+            elif any(k in text for k in ("timeout", "when does my", "when will my", "when will screen", "when does screen")):
+                entities = {"action": "get_timeouts"}
+            # 5. Power Scheme Mutations
+            elif any(k in text for k in ("switch to", "set to", "change to", "use", "put it on", "turn on", "mode to", "plan to")) and any(k in text for k in ("balanced", "high performance", "performance", "power saver", "silent", "turbo")):
+                scheme = "balanced"
+                if "balanced" in text:
+                    scheme = "balanced"
+                elif "high performance" in text or "max performance" in text:
+                    scheme = "high performance"
+                elif "performance" in text:
+                    scheme = "performance"
+                elif "power saver" in text:
+                    scheme = "power saver"
+                elif "turbo" in text:
+                    scheme = "turbo"
+                elif "silent" in text or "quiet" in text:
+                    scheme = "silent"
+                entities = {"action": "set_power_scheme", "scheme": scheme}
+            # 6. Power Scheme Queries
+            elif any(k in text for k in ("power mode", "power plan", "power scheme")):
+                entities = {"action": "get_power_scheme"}
+            # 7. Battery & Charging Queries (Default for power)
+            else:
+                entities = {"action": "get_battery_status"}
+
+            # Single timeout command with "after <N> minutes" is not a compound command
+            if is_compound and entities.get("action") == "set_timeout" and not any(c in text for c in (" and ", " then ", " also ", ",", ";", "+", "&")):
+                is_compound = False
 
             if is_compound:
                 entities["is_compound"] = True

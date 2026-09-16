@@ -141,6 +141,7 @@ Rules:
 - For Sleep: use tool "sleep" with parameters {{}}. Never use shutdown or restart.
 - For Shutdown/Restart: only use when explicitly requested to turn off or reboot the computer. Parameters must be {{}}. Never use reason or extra arguments.
 - For finding files or documents: use tool "find_file" with pattern.
+- For power, battery, charging, power schemes, timeouts, energy saver, and hibernation: use tool "power" with action ("get_battery_status", "get_power_scheme", "set_power_scheme", "get_timeouts", "set_timeout", "get_battery_saver", "hibernate"). For power schemes use scheme ("balanced", "high_performance", "power_saver", "turbo", etc.). For timeouts use target ("display" or "sleep"), minutes (0-1440), and optional source ("ac", "dc", "both"). Never use shutdown or sleep for hibernate. Never use open_settings when asked to inspect or change power/battery/timeouts directly.
 - For file and folder operations (list directory, file info, open file, create folder, create file, rename, copy, move, delete file): use tool "file_operation" with action ("list_directory", "get_file_info", "open_file", "create_folder", "create_file", "rename_file", "copy_file", "move_file", "delete_file"). Never use file_operation for open_folder or find_file. Never use overwrite=true.
 - For opening folders in Windows File Explorer: use tool "open_folder" with path.
 - Any request mentioning YouTube or Spotify: use tool "play_media" with query and app ("youtube" or "spotify"). Never use web_search if the user mentions YouTube or Spotify.
@@ -221,6 +222,7 @@ Rules:
 - For Sleep: use tool "sleep" with parameters {{}}. Never use shutdown or restart.
 - For Shutdown/Restart: only use when explicitly requested to turn off or reboot the computer. Parameters must be {{}}. Never use reason or extra arguments.
 - For finding files or documents: use tool "find_file" with pattern.
+- For power, battery, charging, power schemes, timeouts, energy saver, and hibernation: use tool "power" with action ("get_battery_status", "get_power_scheme", "set_power_scheme", "get_timeouts", "set_timeout", "get_battery_saver", "hibernate"). For power schemes use scheme ("balanced", "high_performance", "power_saver", "turbo", etc.). For timeouts use target ("display" or "sleep"), minutes (0-1440), and optional source ("ac", "dc", "both"). Never use shutdown or sleep for hibernate. Never use open_settings when asked to inspect or change power/battery/timeouts directly.
 - For file and folder operations (list directory, file info, open file, create folder, create file, rename, copy, move, delete file): use tool "file_operation" with action ("list_directory", "get_file_info", "open_file", "create_folder", "create_file", "rename_file", "copy_file", "move_file", "delete_file"). Never use file_operation for open_folder or find_file. Never use overwrite=true.
 - For opening folders in Windows File Explorer: use tool "open_folder" with path.
 - Any request mentioning YouTube or Spotify: use tool "play_media" with query and app ("youtube" or "spotify"). Never use web_search if the user mentions YouTube or Spotify.
@@ -389,6 +391,23 @@ JSON FORMAT:
         if intent_cat in ("shutdown", "restart", "sleep"):
             return True
 
+        if intent_cat == "power":
+            action = (intent.entities or {}).get("action")
+            valid_actions = {
+                "get_battery_status", "get_power_scheme", "set_power_scheme",
+                "get_timeouts", "set_timeout", "get_battery_saver", "hibernate",
+            }
+            if not action or action not in valid_actions:
+                return False
+            if action == "set_power_scheme":
+                scheme = (intent.entities or {}).get("scheme")
+                return bool(scheme and isinstance(scheme, str) and scheme.strip())
+            if action == "set_timeout":
+                target = (intent.entities or {}).get("target")
+                minutes = (intent.entities or {}).get("minutes")
+                return target in ("display", "sleep") and isinstance(minutes, int) and 0 <= minutes <= 1440
+            return True
+
         if intent_cat == "file_operation":
             action = (intent.entities or {}).get("action")
             valid_actions = {
@@ -504,6 +523,23 @@ JSON FORMAT:
                 params = {"application": params.get("application", "")}
             elif intent_tool == "find_file":
                 params = {"pattern": params.get("pattern", "")}
+            elif intent_tool == "power":
+                valid_params = {}
+                p_action = params.get("action", "")
+                if p_action:
+                    valid_params["action"] = p_action
+                if "scheme" in params and params["scheme"]:
+                    valid_params["scheme"] = params["scheme"]
+                if "target" in params and params["target"]:
+                    valid_params["target"] = params["target"]
+                if "minutes" in params and params["minutes"] is not None:
+                    try:
+                        valid_params["minutes"] = int(params["minutes"])
+                    except (ValueError, TypeError):
+                        pass
+                if "source" in params and params["source"]:
+                    valid_params["source"] = params["source"]
+                params = valid_params
             elif intent_tool == "file_operation":
                 valid_params = {}
                 f_action = params.get("action", "")
